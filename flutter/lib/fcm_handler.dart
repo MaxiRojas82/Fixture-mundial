@@ -23,9 +23,9 @@ Future<void> _backgroundMessageHandler(RemoteMessage message) async {
 /// Opciones de Firebase (no requiere google-services.json en el APK).
 /// Completar con los valores de Firebase Console → Project settings → Your apps.
 const _firebaseOptions = FirebaseOptions(
-  apiKey:            'AIzaSyA65znG9yMF8Czs-jWmzCEG9UUaCY_I1gM',
-  appId:             '1:XXXXXXXXXX:android:YYYYYYYYYY',  // reemplazar
-  messagingSenderId: 'XXXXXXXXXX',                        // reemplazar
+  apiKey:            'AIzaSyAAq9KO2lVHr0YjdoxeRi2FQgYFWPclIqc',
+  appId:             '1:613565715645:android:ab864a51053e19d03c13d4',
+  messagingSenderId: '613565715645',
   projectId:         'fixture-mundial-prode',
 );
 
