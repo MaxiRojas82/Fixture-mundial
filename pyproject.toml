@@ -1,0 +1,20 @@
+[tool.flet]
+org = "com.mrojas"
+project = "maxfixture"
+product = "MaxFixture - Mundial 2026"
+description = "Seguí el Mundial FIFA 2026 en tiempo real: resultados en vivo, fixture, tabla de posiciones, análisis IA y alertas de goles."
+version = "1.0.0"
+build_number = 1
+icon = "assets/icon.png"
+splash = "assets/icon.png"
+
+[tool.flet.android]
+permissions = ["INTERNET", "RECEIVE_BOOT_COMPLETED", "VIBRATE"]
+
+[tool.flet.flutter.dependencies]
+flutter_local_notifications = "^17.2.2"
+firebase_core              = "^3.6.0"
+firebase_messaging         = "^15.1.3"
+
+# Privacy policy URL (ingresar en Play Console al publicar):
+# https://[TU_USUARIO].github.io/Fixture-mundial/privacy

@@ -1,0 +1,18 @@
+# Entorno y secretos
+.env
+google-services.json
+GoogleService-Info.plist
+
+# Build
+build/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Cache de datos
+cache/
+
+# IDEs
+.vscode/
+.idea/
