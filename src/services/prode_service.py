@@ -61,7 +61,7 @@ async def save_user(user: ProdeUser) -> None:
                 "displayName": _v(user.display_name),
                 "groupCode": _v(user.group_code),
             }},
-            timeout=10,
+            timeout=5,
         )
 
 
@@ -78,7 +78,7 @@ async def save_prediction(pred: Prediction) -> None:
                 "homeGoals": _v(pred.home_goals),
                 "awayGoals": _v(pred.away_goals),
             }},
-            timeout=10,
+            timeout=5,
         )
 
 
@@ -95,7 +95,7 @@ async def create_group(group: ProdeGroup) -> None:
                 "memberIds": _v(group.member_ids),
                 "memberNames": _v(group.member_names),
             }},
-            timeout=10,
+            timeout=5,
         )
 
 

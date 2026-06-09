@@ -130,8 +130,12 @@ class ProdeScreen:
             bgcolor=COLORS["bg"],
             padding=0,
         )
-        asyncio.create_task(self._load())
+        asyncio.create_task(self._deferred_load())
         return view
+
+    async def _deferred_load(self) -> None:
+        await asyncio.sleep(0.3)
+        await self._load()
 
     def _build_topbar(self) -> ft.Container:
         return ft.Container(
@@ -154,16 +158,19 @@ class ProdeScreen:
     # ── Load ──────────────────────────────────────────────────────────────────
 
     async def _load(self) -> None:
-        uid  = await self._page.client_storage.get_async(self._UID)
-        name = await self._page.client_storage.get_async(self._NAME)
-        code = await self._page.client_storage.get_async(self._GROUP) or ""
+        try:
+            uid  = await self._page.client_storage.get_async(self._UID)
+            name = await self._page.client_storage.get_async(self._NAME)
+            code = await self._page.client_storage.get_async(self._GROUP) or ""
+        except Exception:
+            uid, name, code = None, None, ""
 
         if not uid or not name:
             self._show_setup()
             return
 
-        raw = await self._page.client_storage.get_async(self._PREDS) or "{}"
         try:
+            raw = await self._page.client_storage.get_async(self._PREDS) or "{}"
             self._preds = {int(k): tuple(v) for k, v in json.loads(raw).items()}
         except Exception:
             self._preds = {}
@@ -565,7 +572,6 @@ class ProdeScreen:
     def _show_setup(self) -> None:
         field = ft.TextField(
             hint_text="Tu nombre en el prode",
-            autofocus=True,
             bgcolor=COLORS["bg"],
             color=COLORS["text"],
             border_color=COLORS["primary"],
@@ -691,7 +697,7 @@ class ProdeScreen:
     def _dlg_create(self, _=None) -> None:
         field = ft.TextField(
             hint_text="Nombre del grupo (ej: Amigos del trabajo)",
-            autofocus=True, bgcolor=COLORS["bg"], color=COLORS["text"],
+            bgcolor=COLORS["bg"], color=COLORS["text"],
             border_color=COLORS["primary"], focused_border_color=COLORS["primary"],
             text_size=14, max_length=30,
         )
@@ -743,7 +749,7 @@ class ProdeScreen:
     def _dlg_join(self, _=None) -> None:
         field = ft.TextField(
             hint_text="CÓDIGO DE 6 LETRAS",
-            autofocus=True, bgcolor=COLORS["bg"], color=COLORS["text"],
+            bgcolor=COLORS["bg"], color=COLORS["text"],
             border_color=COLORS["primary"], focused_border_color=COLORS["primary"],
             text_size=20, max_length=6,
             text_align=ft.TextAlign.CENTER,

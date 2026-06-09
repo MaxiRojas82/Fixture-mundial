@@ -49,6 +49,11 @@ class LiveService:
     def on_update(self, callback: UpdateCallback) -> None:
         if callback not in self._update_callbacks:
             self._update_callbacks.append(callback)
+            if self._standings or self._matches:
+                try:
+                    callback()
+                except Exception:
+                    pass
 
     def on_event(self, callback: EventCallback) -> None:
         if callback not in self._event_callbacks:

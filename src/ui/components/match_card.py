@@ -18,7 +18,7 @@ def _flag_img(team_name: str, size: int = 28) -> ft.Control:
     return ft.Container(width=size, height=h)
 
 
-def build_match_card(match: Match, on_tap=None) -> ft.Container:
+def build_match_card(match: Match, on_tap=None, show_date: bool = False) -> ft.Container:
     is_live = match.is_live
 
     if is_live:
@@ -37,7 +37,12 @@ def build_match_card(match: Match, on_tap=None) -> ft.Container:
         card_border = ft.border.all(1, COLORS["yellow"] + "55")
         score_color = COLORS["yellow"]
     else:
-        status_label = match.date.astimezone().strftime("%H:%M")
+        local_dt = match.date.astimezone()
+        if show_date:
+            _MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
+            status_label = f"{local_dt.day} {_MONTHS[local_dt.month - 1]} · {local_dt.strftime('%H:%M')}"
+        else:
+            status_label = local_dt.strftime("%H:%M")
         status_color = COLORS["text_secondary"]
         card_border = ft.border.all(1, COLORS["card_border"])
         score_color = COLORS["text_secondary"]

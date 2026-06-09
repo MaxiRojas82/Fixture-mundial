@@ -96,7 +96,7 @@ class BracketScreen:
             self._body.controls.append(_round_banner(rnd, icon, color))
             for m in sorted(by_round[rnd], key=lambda x: x.date):
                 self._body.controls.append(
-                    build_match_card(m, on_tap=lambda _, mid=m.id: self._page.go(f"/match/{mid}"))
+                    build_match_card(m, on_tap=lambda _, mid=m.id: self._page.go(f"/match/{mid}"), show_date=True)
                 )
 
         self._body.controls.append(ft.Container(height=16))

@@ -6,7 +6,7 @@ from src.services.live_service import LiveService
 from src.models.match import Match
 from src.ui.notifications import is_enabled, notifications_enabled, toggle_notifications
 from src.ui.theme import COLORS
-from src.ui.components.app_drawer import build_hamburger, build_refresh_btn, open_notif_dialog
+from src.ui.components.app_drawer import build_hamburger, build_refresh_btn
 from src.services import push_notification_service as push_notif
 from src.ui.components.match_card import build_match_card
 from src.ui.components.goal_alert import GoalAlert

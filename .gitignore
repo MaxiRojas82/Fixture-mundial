@@ -2,6 +2,8 @@
 .env
 google-services.json
 GoogleService-Info.plist
+*.keystore
+*.jks
 
 # Build
 build/

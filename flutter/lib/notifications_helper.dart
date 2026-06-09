@@ -21,6 +21,11 @@ class NotificationsHelper {
       onDidReceiveNotificationResponse: _onNotificationTap,
     );
 
+    // Pedir permiso de notificaciones (Android 13+)
+    final androidImpl = _plugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    await androidImpl?.requestNotificationsPermission();
+
     // Escuchar llamadas desde Python (page.invoke_method)
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'showNotification') {

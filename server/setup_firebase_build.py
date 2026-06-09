@@ -34,15 +34,92 @@ def patch_root_gradle() -> None:
         print("✓ Root build.gradle — ya tiene google-services, sin cambios")
         return
 
+    # Insertar classpath justo después de la línea del kotlin-gradle-plugin
     content = re.sub(
-        r"(buildscript\s*\{[^}]*?dependencies\s*\{)",
+        r"(classpath\s+[\"']org\.jetbrains\.kotlin:kotlin-gradle-plugin:[^\"']+[\"'])",
         r"\1\n        classpath 'com.google.gms:google-services:4.4.2'",
         content,
         count=1,
-        flags=re.DOTALL,
     )
     path.write_text(content, encoding="utf-8")
     print("✓ Root build.gradle — classpath google-services agregado")
+
+
+def patch_signing() -> None:
+    """Configura firma de release con maxfixture-upload.keystore."""
+    path = ANDROID_DIR / "app" / "build.gradle"
+    if not path.exists():
+        return
+    content = path.read_text(encoding="utf-8")
+    if "signingConfigs" in content and "release {" in content and "storeFile" in content:
+        print("✓ App build.gradle — signing ya configurado, sin cambios")
+        return
+
+    keystore_path = PROJECT_ROOT / "maxfixture-upload.keystore"
+    keystore_str = str(keystore_path).replace("\\", "/")
+
+    signing_block = f"""    signingConfigs {{
+        release {{
+            storeFile file("{keystore_str}")
+            storePassword "eitanloana09"
+            keyAlias "maxfixture"
+            keyPassword "eitanloana09"
+        }}
+    }}
+
+"""
+    content = content.replace(
+        "// flet: android_signing \n\n    buildTypes {",
+        signing_block + "    buildTypes {",
+        1,
+    )
+    content = content.replace(
+        "// flet: android_signing \n            signingConfig signingConfigs.debug\n// flet: end of android_signing ",
+        "            signingConfig signingConfigs.release",
+        1,
+    )
+    path.write_text(content, encoding="utf-8")
+    print("✓ App build.gradle — firma de release configurada")
+
+
+def patch_application_id() -> None:
+    """Corrige el applicationId generado por Flet para que coincida con Firebase (com.mrojas.maxfixture)."""
+    path = ANDROID_DIR / "app" / "build.gradle"
+    if not path.exists():
+        return
+    content = path.read_text(encoding="utf-8")
+    if "com.mrojas.fixture_mundial" not in content:
+        print("✓ App build.gradle — applicationId ya es com.mrojas.maxfixture, sin cambios")
+    else:
+        content = content.replace("com.mrojas.fixture_mundial", "com.mrojas.maxfixture")
+        path.write_text(content, encoding="utf-8")
+        print("✓ App build.gradle — applicationId corregido a com.mrojas.maxfixture")
+    patch_main_activity()
+
+
+def patch_main_activity() -> None:
+    """Crea MainActivity.kt con el paquete correcto (com.mrojas.maxfixture).
+
+    Flet genera el archivo bajo com/mrojas/fixture_mundial/ (o com/flet/fixture_mundial/),
+    pero el namespace en build.gradle es com.mrojas.maxfixture, por lo que Android busca
+    com.mrojas.maxfixture.MainActivity y no lo encuentra → crash en startup.
+    """
+    kotlin_dir = ANDROID_DIR / "app" / "src" / "main" / "kotlin"
+    correct_dir = kotlin_dir / "com" / "mrojas" / "maxfixture"
+    correct_file = correct_dir / "MainActivity.kt"
+
+    if correct_file.exists():
+        print("✓ MainActivity.kt — ya está en com/mrojas/maxfixture/, sin cambios")
+        return
+
+    correct_dir.mkdir(parents=True, exist_ok=True)
+    correct_file.write_text(
+        "package com.mrojas.maxfixture\n\n"
+        "import io.flutter.embedding.android.FlutterActivity\n\n"
+        "class MainActivity: FlutterActivity() {\n}\n",
+        encoding="utf-8",
+    )
+    print("✓ MainActivity.kt — creado en com/mrojas/maxfixture/")
 
 
 def patch_app_gradle() -> None:
@@ -81,6 +158,68 @@ def copy_google_services() -> None:
     print(f"✓ google-services.json copiado → {dst}")
 
 
+def patch_pubspec_deps() -> None:
+    """Agrega firebase_core, firebase_messaging y flutter_local_notifications al pubspec generado."""
+    path = FLUTTER_DIR / "pubspec.yaml"
+    if not path.exists():
+        print(f"No encontré {path}", file=sys.stderr)
+        sys.exit(1)
+
+    content = path.read_text(encoding="utf-8")
+    if "firebase_core" in content:
+        print("✓ pubspec.yaml — deps Firebase ya presentes, sin cambios")
+        return
+
+    content = content.replace(
+        "  url_strategy: ^0.2.0",
+        "  url_strategy: ^0.2.0\n  firebase_core: ^3.0.0\n  firebase_messaging: ^15.0.0\n  flutter_local_notifications: ^17.0.0\n  shared_preferences: ^2.3.2\n  url_launcher: ^6.3.0",
+        1,
+    )
+    # Pin versions compatible with current Gradle setup
+    if "shared_preferences_android:" not in content:
+        content = content.replace(
+            "  flet: 0.28.3",
+            "  flet: 0.28.3\n  shared_preferences_android: 2.4.13\n  url_launcher_android: 6.3.20",
+            1,
+        )
+    path.write_text(content, encoding="utf-8")
+    print("✓ pubspec.yaml — firebase_core, firebase_messaging, flutter_local_notifications, shared_preferences, url_launcher agregados")
+
+
+def patch_desugaring() -> None:
+    """Habilita core library desugaring requerido por flutter_local_notifications."""
+    path = ANDROID_DIR / "app" / "build.gradle"
+    if not path.exists():
+        print(f"No encontré {path}", file=sys.stderr)
+        sys.exit(1)
+
+    content = path.read_text(encoding="utf-8")
+    if "coreLibraryDesugaringEnabled" in content:
+        print("✓ App build.gradle — desugaring ya habilitado, sin cambios")
+        return
+
+    content = content.replace(
+        "        sourceCompatibility JavaVersion.VERSION_1_8\n        targetCompatibility JavaVersion.VERSION_1_8",
+        "        sourceCompatibility JavaVersion.VERSION_1_8\n        targetCompatibility JavaVersion.VERSION_1_8\n        coreLibraryDesugaringEnabled true",
+        1,
+    )
+    content = content.replace(
+        "dependencies {}",
+        "dependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'\n}",
+        1,
+    )
+    # Si dependencies ya tenía contenido
+    if "coreLibraryDesugaring" not in content:
+        content = re.sub(
+            r"(dependencies \{)",
+            r"\1\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'",
+            content,
+            count=1,
+        )
+    path.write_text(content, encoding="utf-8")
+    print("✓ App build.gradle — core library desugaring habilitado")
+
+
 def patch_firebase_messaging_init() -> None:
     """Agrega FCMHandler.init() al main.dart generado por Flet."""
     path = FLUTTER_DIR / "lib" / "main.dart"
@@ -98,14 +237,13 @@ def patch_firebase_messaging_init() -> None:
         "import 'package:flet/flet.dart';\nimport 'fcm_handler.dart';",
         1,
     )
-    # Agregar init antes de runApp (o dentro del main)
+    # Agregar init al comienzo del main (antes de runApp)
+    # Flet genera: void main(List<String> args) async {
     content = content.replace(
-        "void main() {",
-        "void main() async {\n  WidgetsFlutterBinding.ensureInitialized();\n  await FCMHandler.init();",
+        "void main(List<String> args) async {\n  _args",
+        "void main(List<String> args) async {\n  WidgetsFlutterBinding.ensureInitialized();\n  await FCMHandler.init();\n  _args",
         1,
     )
-    # Corregir posible duplicado de async si ya estaba
-    content = content.replace("async {\n  WidgetsFlutterBinding", "async {\n  WidgetsFlutterBinding")
     path.write_text(content, encoding="utf-8")
     print("✓ main.dart — FCMHandler.init() integrado")
 
@@ -117,8 +255,12 @@ if __name__ == "__main__":
         sys.exit(1)
 
     print("Configurando Firebase en el proyecto Flutter generado...\n")
+    patch_pubspec_deps()
     patch_root_gradle()
     patch_app_gradle()
+    patch_signing()
+    patch_application_id()
+    patch_desugaring()
     copy_google_services()
     patch_firebase_messaging_init()
 

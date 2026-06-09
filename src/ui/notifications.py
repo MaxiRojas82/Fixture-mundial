@@ -13,6 +13,11 @@ def toggle_favorite(team: str) -> None:
         _favorites.add(team)
 
 
+def set_favorites(favs: list[str]) -> None:
+    global _favorites
+    _favorites = set(favs)
+
+
 def is_favorite(team: str) -> bool:
     return team in _favorites
 
@@ -62,6 +67,14 @@ def is_enabled(event_type: str) -> bool:
 
 def set_enabled(event_type: str, value: bool) -> None:
     _settings[event_type] = value
+
+
+def get_event_settings() -> dict[str, bool]:
+    return dict(_settings)
+
+
+def set_event_settings(settings: dict[str, bool]) -> None:
+    _settings.update(settings)
 
 
 def event_accent(event_type: str) -> str:
