@@ -44,14 +44,23 @@ def init_firebase() -> firestore.Client:
 async def get_live_matches() -> list[dict]:
     url = "https://api.football-data.org/v4/matches"
     async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.get(
-            url,
-            headers={"X-Auth-Token": FOOTBALL_API_KEY},
-            params={"competitions": COMPETITION_ID, "status": "LIVE"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("matches", [])
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            try:
+                resp = await client.get(
+                    url,
+                    headers={"X-Auth-Token": FOOTBALL_API_KEY},
+                    params={"competitions": COMPETITION_ID, "status": "LIVE"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("matches", [])
+            except httpx.RequestError:
+                if attempt == attempts:
+                    raise
+                wait_seconds = attempt * 2
+                print(f"⚠️ Error de red al consultar la API. Reintentando en {wait_seconds}s...")
+                await asyncio.sleep(wait_seconds)
 
 
 # ── Estado en Firestore ───────────────────────────────────────────────────────
@@ -154,6 +163,9 @@ async def main() -> None:
     print("🔍 Consultando partidos en vivo...")
     try:
         live = await get_live_matches()
+    except httpx.RequestError as e:
+        print(f"ERROR de red al consultar API: {e}. Se reintentará en el próximo ciclo.", file=sys.stderr)
+        return
     except httpx.HTTPStatusError as e:
         print(f"ERROR API: {e.response.status_code}", file=sys.stderr)
         sys.exit(1)
