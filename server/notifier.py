@@ -23,7 +23,7 @@ FOOTBALL_API_KEY = os.environ.get("FOOTBALL_API_KEY", "")
 COMPETITION_ID   = os.environ.get("WORLD_CUP_COMPETITION_ID", "2000")
 FCM_TOPIC        = "maxfixture_events"
 MAX_RETRY_ATTEMPTS = 3
-RETRY_BACKOFF_MULTIPLIER = 2
+RETRY_BACKOFF_BASE = 2
 
 LIVE_STATUSES = {"IN_PLAY", "PAUSED", "EXTRA_TIME", "PENALTY_SHOOTOUT"}
 
@@ -59,7 +59,7 @@ async def get_live_matches() -> list[dict]:
             except httpx.RequestError as e:
                 if attempt == MAX_RETRY_ATTEMPTS:
                     raise
-                wait_seconds = RETRY_BACKOFF_MULTIPLIER ** (attempt - 1)
+                wait_seconds = RETRY_BACKOFF_BASE ** attempt
                 print(
                     f"⚠️ Error de red al consultar la API ({type(e).__name__}: {e}). "
                     f"Reintentando en {wait_seconds}s..."
