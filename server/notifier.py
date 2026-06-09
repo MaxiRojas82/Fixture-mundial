@@ -22,6 +22,8 @@ load_dotenv()
 FOOTBALL_API_KEY = os.environ.get("FOOTBALL_API_KEY", "")
 COMPETITION_ID   = os.environ.get("WORLD_CUP_COMPETITION_ID", "2000")
 FCM_TOPIC        = "maxfixture_events"
+MAX_RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_MULTIPLIER = 2
 
 LIVE_STATUSES = {"IN_PLAY", "PAUSED", "EXTRA_TIME", "PENALTY_SHOOTOUT"}
 
@@ -44,8 +46,7 @@ def init_firebase() -> firestore.Client:
 async def get_live_matches() -> list[dict]:
     url = "https://api.football-data.org/v4/matches"
     async with httpx.AsyncClient(timeout=20) as client:
-        attempts = 3
-        for attempt in range(1, attempts + 1):
+        for attempt in range(1, MAX_RETRY_ATTEMPTS + 1):
             try:
                 resp = await client.get(
                     url,
@@ -56,9 +57,9 @@ async def get_live_matches() -> list[dict]:
                 data = resp.json()
                 return data.get("matches", [])
             except httpx.RequestError:
-                if attempt == attempts:
+                if attempt == MAX_RETRY_ATTEMPTS:
                     raise
-                wait_seconds = attempt * 2
+                wait_seconds = attempt * RETRY_BACKOFF_MULTIPLIER
                 print(f"⚠️ Error de red al consultar la API. Reintentando en {wait_seconds}s...")
                 await asyncio.sleep(wait_seconds)
 
