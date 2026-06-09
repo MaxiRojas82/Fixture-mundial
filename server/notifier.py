@@ -56,11 +56,14 @@ async def get_live_matches() -> list[dict]:
                 resp.raise_for_status()
                 data = resp.json()
                 return data.get("matches", [])
-            except httpx.RequestError:
+            except httpx.RequestError as e:
                 if attempt == MAX_RETRY_ATTEMPTS:
                     raise
-                wait_seconds = attempt * RETRY_BACKOFF_MULTIPLIER
-                print(f"⚠️ Error de red al consultar la API. Reintentando en {wait_seconds}s...")
+                wait_seconds = RETRY_BACKOFF_MULTIPLIER ** attempt
+                print(
+                    f"⚠️ Error de red al consultar la API ({type(e).__name__}: {e}). "
+                    f"Reintentando en {wait_seconds}s..."
+                )
                 await asyncio.sleep(wait_seconds)
 
 
