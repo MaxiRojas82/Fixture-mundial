@@ -1,3 +1,4 @@
+_notifications_on: bool = True
 _favorites: set[str] = set()
 
 
@@ -45,8 +46,18 @@ EVENTS: list[tuple[str, str, str, str]] = [
 ]
 
 
+def notifications_enabled() -> bool:
+    return _notifications_on
+
+
+def toggle_notifications() -> bool:
+    global _notifications_on
+    _notifications_on = not _notifications_on
+    return _notifications_on
+
+
 def is_enabled(event_type: str) -> bool:
-    return _settings.get(event_type, True)
+    return _notifications_on and _settings.get(event_type, True)
 
 
 def set_enabled(event_type: str, value: bool) -> None:

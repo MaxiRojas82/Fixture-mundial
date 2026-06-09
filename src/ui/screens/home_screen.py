@@ -4,7 +4,7 @@ from datetime import date as DateType
 import flet as ft
 from src.services.live_service import LiveService
 from src.models.match import Match
-from src.ui.notifications import is_enabled
+from src.ui.notifications import is_enabled, notifications_enabled, toggle_notifications
 from src.ui.theme import COLORS
 from src.ui.components.app_drawer import build_hamburger, build_refresh_btn, open_notif_dialog
 from src.services import push_notification_service as push_notif
@@ -44,11 +44,11 @@ class HomeScreen:
         self._service.on_update(self._on_update)
         self._refresh_btn = build_refresh_btn(self._page, self._service)
         self._notif_btn = ft.IconButton(
-            icon=ft.Icons.NOTIFICATIONS_NONE_ROUNDED,
-            icon_color=COLORS["text_secondary"],
+            icon=ft.Icons.NOTIFICATIONS_ROUNDED if notifications_enabled() else ft.Icons.NOTIFICATIONS_OFF_ROUNDED,
+            icon_color=COLORS["primary"] if notifications_enabled() else COLORS["text_secondary"],
             icon_size=22,
-            tooltip="Notificaciones",
-            on_click=lambda _: open_notif_dialog(self._page, self._service),
+            tooltip="Notificaciones activadas" if notifications_enabled() else "Notificaciones desactivadas",
+            on_click=self._toggle_notif,
         )
         self._render()
         asyncio.create_task(self._run_countdown())
@@ -199,6 +199,13 @@ class HomeScreen:
         self._date_row.controls = tabs
 
     # ── Render y datos ─────────────────────────────────────────────────────
+
+    def _toggle_notif(self, _) -> None:
+        enabled = toggle_notifications()
+        self._notif_btn.icon = ft.Icons.NOTIFICATIONS_ROUNDED if enabled else ft.Icons.NOTIFICATIONS_OFF_ROUNDED
+        self._notif_btn.icon_color = COLORS["primary"] if enabled else COLORS["text_secondary"]
+        self._notif_btn.tooltip = "Notificaciones activadas" if enabled else "Notificaciones desactivadas"
+        self._page.update()
 
     def _render(self) -> None:
         self._body.controls.clear()

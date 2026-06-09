@@ -7,12 +7,14 @@ def init(page: ft.Page) -> None:
     """Registrar la página al arrancar. Escucha eventos desde Dart."""
     global _page
     _page = page
-    page.on_invoke = _on_invoke
+    try:
+        page.on_invoke = _on_invoke  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
 
 def show(title: str, body: str, match_id: int) -> None:
-    """Mostrar notificación del sistema cuando la app está en foreground.
-    En background/cerrada el servidor FCM la envía directamente al dispositivo."""
+    """Mostrar notificación del sistema cuando la app está en foreground."""
     if _page is None:
         return
     try:
@@ -24,16 +26,14 @@ def show(title: str, body: str, match_id: int) -> None:
         pass
 
 
-def _on_invoke(e: ft.InvokeMethodEvent) -> None:
-    """Recibir llamadas desde Dart:
-      - 'showNotification': mostrar notificación local (cuando app en foreground)
-      - 'navigateTo':       navegar al partido al tocar una notificación FCM
-    """
+def _on_invoke(e) -> None:  # type: ignore[no-untyped-def]
+    """Recibir llamadas desde Dart (navigateTo, showNotification)."""
     if _page is None:
         return
     try:
         data = e.data if isinstance(e.data, dict) else {}
-        if e.name == "navigateTo":
+        name = getattr(e, "name", None) or getattr(e, "method_name", None) or ""
+        if name == "navigateTo":
             route = data.get("route", "")
             if route:
                 _page.go(route)
