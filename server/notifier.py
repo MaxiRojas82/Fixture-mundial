@@ -59,7 +59,7 @@ async def get_live_matches() -> list[dict]:
             except httpx.RequestError as e:
                 if attempt == MAX_RETRY_ATTEMPTS:
                     raise
-                wait_seconds = RETRY_BACKOFF_MULTIPLIER ** attempt
+                wait_seconds = RETRY_BACKOFF_MULTIPLIER ** (attempt - 1)
                 print(
                     f"⚠️ Error de red al consultar la API ({type(e).__name__}: {e}). "
                     f"Reintentando en {wait_seconds}s..."
@@ -168,7 +168,11 @@ async def main() -> None:
     try:
         live = await get_live_matches()
     except httpx.RequestError as e:
-        print(f"ERROR de red al consultar API: {e}. Se reintentará en el próximo ciclo.", file=sys.stderr)
+        print(
+            f"ERROR de red al consultar API: {e}. "
+            "Esta ejecución finaliza; se reintentará en el próximo ciclo programado.",
+            file=sys.stderr,
+        )
         return
     except httpx.HTTPStatusError as e:
         print(f"ERROR API: {e.response.status_code}", file=sys.stderr)
