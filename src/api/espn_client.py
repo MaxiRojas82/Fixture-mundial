@@ -1,0 +1,88 @@
+"""Cliente del scoreboard público de ESPN — marcador en vivo del Mundial.
+
+No requiere clave ni tiene cuota. Se usa como fuente principal de datos
+en vivo porque football-data.org (gratuito) es inestable para esta
+competición y API-Football no cubre 2026 en su plan gratuito.
+"""
+
+import httpx
+from datetime import datetime
+
+_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
+
+
+def _parse_minute(clock: str) -> int | None:
+    """'45'+4'' → 45 ; '67'' → 67 ; '0'' → None"""
+    try:
+        base = clock.split("'")[0].strip()
+        minute = int(base)
+        return minute if minute > 0 else None
+    except (ValueError, AttributeError, IndexError):
+        return None
+
+
+async def get_live() -> list[dict]:
+    """Partidos en juego o recién terminados, según ESPN.
+
+    Retorna [{kickoff, home, away, status (short del modelo), minute,
+    home_goals, away_goals}].
+    """
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.get(_URL)
+        r.raise_for_status()
+        data = r.json()
+
+    out: list[dict] = []
+    for ev in data.get("events", []):
+        comp = (ev.get("competitions") or [{}])[0]
+        stype = (ev.get("status") or {}).get("type") or {}
+        state = stype.get("state")
+        if state not in ("in", "post"):
+            continue
+
+        try:
+            kickoff = datetime.fromisoformat(ev["date"].replace("Z", "+00:00"))
+        except (KeyError, ValueError):
+            continue
+
+        home_c, away_c = None, None
+        for comp_team in comp.get("competitors", []):
+            if comp_team.get("homeAway") == "home":
+                home_c = comp_team
+            elif comp_team.get("homeAway") == "away":
+                away_c = comp_team
+        if not home_c or not away_c:
+            continue
+
+        detail = (stype.get("shortDetail") or "").upper()
+        period = (ev.get("status") or {}).get("period") or 1
+        if state == "post":
+            short = "FT"
+        elif "HT" in detail or "HALF" in detail:
+            short = "HT"
+        elif "PEN" in detail or "SHOOTOUT" in detail:
+            short = "P"
+        elif period >= 3:
+            short = "ET"
+        elif period <= 1:
+            short = "1H"
+        else:
+            short = "2H"
+
+        def _score(comp_team: dict) -> int | None:
+            raw = comp_team.get("score")
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return None
+
+        out.append({
+            "kickoff":    kickoff,
+            "home":       (home_c.get("team") or {}).get("displayName") or "",
+            "away":       (away_c.get("team") or {}).get("displayName") or "",
+            "status":     short,
+            "minute":     _parse_minute((ev.get("status") or {}).get("displayClock") or ""),
+            "home_goals": _score(home_c),
+            "away_goals": _score(away_c),
+        })
+    return out

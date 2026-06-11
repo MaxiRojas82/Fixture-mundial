@@ -29,6 +29,5 @@ jobs:
         continue-on-error: true
         env:
           FOOTBALL_API_KEY:            ${{ secrets.FOOTBALL_API_KEY }}
-          API_FOOTBALL_KEY:            ${{ secrets.API_FOOTBALL_KEY }}
           FIREBASE_CREDENTIALS_JSON:   ${{ secrets.FIREBASE_CREDENTIALS_JSON }}
           WORLD_CUP_COMPETITION_ID:    '2000'

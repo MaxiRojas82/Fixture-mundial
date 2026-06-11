@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 from dotenv import load_dotenv
 from src.api.football_client import FootballClient
+from src.api import espn_client
 from src.models.match import Match, MatchStatus, Score, LIVE_STATUSES
 from src.models.standing import TeamStanding
 from src.services import live_snapshot
@@ -248,8 +249,41 @@ class LiveService:
                 if ca > pa:
                     self._fire_event(current, f"⚽  GOL de {current.away.name} — {marcador}", "goal")
 
+    def _find_local_by_schedule(self, kickoff, home: str, away: str) -> Match | None:
+        """Busca el partido local que coincide por horario (±20 min) y nombres."""
+        def toks(s: str) -> set[str]:
+            return set((s or "").lower().replace("-", " ").split())
+        want = toks(home) | toks(away)
+        best, best_score = None, 0
+        for m in self._matches.values():
+            try:
+                if abs((m.date - kickoff).total_seconds()) > 1200:
+                    continue
+            except TypeError:
+                continue
+            score = len((toks(m.home.name) | toks(m.away.name)) & want)
+            if score > best_score:
+                best, best_score = m, score
+        return best
+
     async def _fetch_live(self) -> None:
-        # 1) Snapshot del notificador (API-Football, la fuente más confiable)
+        # 1) ESPN — fuente principal en vivo (gratis, sin clave, al instante)
+        try:
+            espn_items = await espn_client.get_live()
+            espn_snap: dict[int, dict] = {}
+            for it in espn_items:
+                local = self._find_local_by_schedule(it["kickoff"], it["home"], it["away"])
+                if local:
+                    espn_snap[local.id] = {
+                        "status": it["status"], "minute": it["minute"],
+                        "home": it["home_goals"], "away": it["away_goals"],
+                    }
+            if espn_snap:
+                self._merge_snapshot(espn_snap)
+        except Exception:
+            pass
+
+        # 2) Snapshot del notificador en Firestore (respaldo, llega con lag)
         try:
             snap = await live_snapshot.fetch()
             if snap:
@@ -257,7 +291,7 @@ class LiveService:
         except Exception:
             pass
 
-        # 2) football-data directo (gratuito; a veces tarda o retrocede)
+        # 3) football-data directo (gratuito; a veces tarda o retrocede)
         try:
             live_matches = await self._client.get_live_fixtures()
         except Exception:

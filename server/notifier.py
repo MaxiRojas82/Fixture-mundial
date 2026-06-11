@@ -2,17 +2,14 @@
 """
 MaxFixture FCM Notifier — corre cada 5 minutos via GitHub Actions.
 
-Fuente de datos en vivo: API-Football (plan gratuito, 100 req/día).
-Para cuidar la cuota:
-  - Solo consulta API-Football dentro de la ventana de un partido
-    (10 min antes del inicio hasta ~3h45 después), según el fixture
-    de football-data.org (gratuito e ilimitado para esto).
-  - Una sola consulta por corrida cubre todos los partidos en vivo.
-  - Contador diario en Firestore corta a las 92 consultas.
+Fuente de datos en vivo: scoreboard público de ESPN (sin clave, sin cuota).
+football-data.org se usa solo para obtener el fixture y mapear los ids
+que usa la app.
 
-Además de enviar push notifications, publica un snapshot del estado en
-vivo en Firestore (notifier_state/live_snapshot) que la app lee para
-mostrar marcador y minuto sin gastar cuota de API-Football.
+Detecta inicio/goles/entretiempo/final comparando contra el estado previo
+guardado en Firestore (notifier_state/matches), envía push notifications
+por FCM y publica un snapshot en vivo (notifier_state/live_snapshot) que
+la app usa como respaldo de datos.
 """
 
 import asyncio
@@ -28,25 +25,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-FOOTBALL_API_KEY  = os.environ.get("FOOTBALL_API_KEY", "")
-API_FOOTBALL_KEY  = os.environ.get("API_FOOTBALL_KEY", "")
-COMPETITION_ID    = os.environ.get("WORLD_CUP_COMPETITION_ID", "2000")
-FCM_TOPIC         = "maxfixture_events"
+FOOTBALL_API_KEY = os.environ.get("FOOTBALL_API_KEY", "")
+COMPETITION_ID   = os.environ.get("WORLD_CUP_COMPETITION_ID", "2000")
+FCM_TOPIC        = "maxfixture_events"
 
-AF_BASE   = "https://v3.football.api-sports.io"
-AF_LEAGUE = 1      # FIFA World Cup en API-Football
-AF_SEASON = 2026
-AF_DAILY_BUDGET = 92
+ESPN_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
 
-# Status de API-Football normalizados a los códigos del modelo de la app
-_AF_STATUS_NORM = {
-    "NS": "NS", "TBD": "NS",
-    "1H": "1H", "HT": "HT", "2H": "2H",
-    "ET": "ET", "BT": "ET", "P": "P",
-    "SUSP": "2H", "INT": "2H",
-    "FT": "FT", "AET": "FT", "PEN": "FT",
-    "PST": "PST", "CANC": "CANC", "ABD": "CANC", "AWD": "FT", "WO": "FT",
-}
 _LIVE_SHORTS = {"1H", "HT", "2H", "ET", "P"}
 
 _TRANSIENT_ERRORS = (
@@ -72,12 +56,12 @@ def init_firebase() -> firestore.Client:
 
 # ── HTTP con reintentos ───────────────────────────────────────────────────────
 
-async def _get_json(url: str, headers: dict, params: dict) -> dict:
+async def _get_json(url: str, headers: dict | None = None, params: dict | None = None) -> dict:
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(url, headers=headers, params=params)
+                resp = await client.get(url, headers=headers or {}, params=params or {})
                 resp.raise_for_status()
                 return resp.json()
         except _TRANSIENT_ERRORS as exc:
@@ -88,7 +72,7 @@ async def _get_json(url: str, headers: dict, params: dict) -> dict:
     raise last_exc  # type: ignore[misc]
 
 
-# ── football-data.org: fixture del día (gratuito) ─────────────────────────────
+# ── football-data.org: fixture para mapear ids (gratuito) ─────────────────────
 
 async def get_fd_schedule() -> list[dict]:
     now = datetime.now(timezone.utc)
@@ -116,43 +100,87 @@ def in_match_window(fd_matches: list[dict]) -> bool:
     return False
 
 
-# ── API-Football: partidos en vivo ────────────────────────────────────────────
+# ── ESPN: partidos en vivo ────────────────────────────────────────────────────
 
-async def get_af_live() -> list[dict]:
-    data = await _get_json(
-        f"{AF_BASE}/fixtures",
-        headers={"x-apisports-key": API_FOOTBALL_KEY},
-        params={"live": "all", "league": AF_LEAGUE, "season": AF_SEASON},
-    )
-    errors = data.get("errors")
-    if errors:
-        print(f"  ⚠ API-Football devolvió errores: {errors}", file=sys.stderr)
-    return data.get("response", [])
+def _parse_minute(clock: str) -> int | None:
+    try:
+        minute = int(clock.split("'")[0].strip())
+        return minute if minute > 0 else None
+    except (ValueError, AttributeError, IndexError):
+        return None
 
 
-# ── Mapeo API-Football → ids de football-data ────────────────────────────────
+async def get_espn_live() -> list[dict]:
+    data = await _get_json(ESPN_URL)
+    out: list[dict] = []
+    for ev in data.get("events", []):
+        comp = (ev.get("competitions") or [{}])[0]
+        stype = (ev.get("status") or {}).get("type") or {}
+        state = stype.get("state")
+        if state not in ("in", "post"):
+            continue
+        try:
+            kickoff = datetime.fromisoformat(ev["date"].replace("Z", "+00:00"))
+        except (KeyError, ValueError):
+            continue
+
+        home_c, away_c = None, None
+        for ct in comp.get("competitors", []):
+            if ct.get("homeAway") == "home":
+                home_c = ct
+            elif ct.get("homeAway") == "away":
+                away_c = ct
+        if not home_c or not away_c:
+            continue
+
+        detail = (stype.get("shortDetail") or "").upper()
+        period = (ev.get("status") or {}).get("period") or 1
+        if state == "post":
+            short = "FT"
+        elif "HT" in detail or "HALF" in detail:
+            short = "HT"
+        elif "PEN" in detail or "SHOOTOUT" in detail:
+            short = "P"
+        elif period >= 3:
+            short = "ET"
+        elif period <= 1:
+            short = "1H"
+        else:
+            short = "2H"
+
+        def _score(ct: dict) -> int | None:
+            try:
+                return int(ct.get("score"))
+            except (TypeError, ValueError):
+                return None
+
+        out.append({
+            "kickoff":   kickoff,
+            "home_name": (home_c.get("team") or {}).get("displayName") or "",
+            "away_name": (away_c.get("team") or {}).get("displayName") or "",
+            "status":    short,
+            "minute":    _parse_minute((ev.get("status") or {}).get("displayClock") or ""),
+            "home":      _score(home_c),
+            "away":      _score(away_c),
+        })
+    return out
+
+
+# ── Mapeo ESPN → ids de football-data ─────────────────────────────────────────
 
 def _tokens(s: str) -> set[str]:
     return set((s or "").lower().replace("-", " ").split())
 
 
-def map_af_to_fd(af_fixture: dict, fd_matches: list[dict]) -> str | None:
-    """Encuentra el id de football-data del fixture de API-Football,
-    por horario de inicio (±20 min) y similitud de nombres."""
-    try:
-        af_kickoff = datetime.fromisoformat(af_fixture["fixture"]["date"])
-    except (KeyError, ValueError):
-        return None
-    af_names = (_tokens(af_fixture["teams"]["home"]["name"])
-                | _tokens(af_fixture["teams"]["away"]["name"]))
-
-    best_id, best_score = None, -1
+def map_to_fd_id(kickoff: datetime, home: str, away: str, fd_matches: list[dict]) -> str | None:
+    want = _tokens(home) | _tokens(away)
+    best_id, best_score = None, 0
     for m in fd_matches:
         try:
             fd_kickoff = datetime.fromisoformat(m["utcDate"].replace("Z", "+00:00"))
         except (KeyError, ValueError):
             continue
-        if abs((fd_kickoff - af_kickoff).total_seconds()) > 1200:
+        if abs((fd_kickoff - kickoff).total_seconds()) > 1200:
             continue
         fd_names = (
             _tokens(m.get("homeTeam", {}).get("name") or "")
@@ -160,13 +188,13 @@ def map_af_to_fd(af_fixture: dict, fd_matches: list[dict]) -> str | None:
             | _tokens(m.get("awayTeam", {}).get("name") or "")
             | _tokens(m.get("awayTeam", {}).get("shortName") or "")
         )
-        score = len(af_names & fd_names)
+        score = len(want & fd_names)
         if score > best_score:
             best_id, best_score = str(m["id"]), score
     return best_id
 
 
-# ── Estado, cuota y snapshot en Firestore ─────────────────────────────────────
+# ── Estado y snapshot en Firestore ────────────────────────────────────────────
 
 def load_state(db: firestore.Client) -> dict:
     doc = db.collection("notifier_state").document("matches").get()
@@ -175,20 +203,6 @@ def load_state(db: firestore.Client) -> dict:
 
 def save_state(db: firestore.Client, state: dict) -> None:
     db.collection("notifier_state").document("matches").set(state)
-
-
-def check_budget(db: firestore.Client) -> bool:
-    """True si queda cuota diaria de API-Football. Incrementa el contador."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    ref = db.collection("notifier_state").document("usage")
-    doc = ref.get()
-    data = doc.to_dict() if doc.exists else {}
-    count = data.get("count", 0) if data.get("date") == today else 0
-    if count >= AF_DAILY_BUDGET:
-        print(f"⛔ Cuota diaria de API-Football agotada ({count}/{AF_DAILY_BUDGET}).")
-        return False
-    ref.set({"date": today, "count": count + 1})
-    return True
 
 
 def save_snapshot(db: firestore.Client, snapshot: dict) -> None:
@@ -249,9 +263,6 @@ def send_notification(title: str, body: str, match_id: str) -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main() -> None:
-    if not API_FOOTBALL_KEY:
-        print("ERROR: API_FOOTBALL_KEY no configurado.", file=sys.stderr)
-        sys.exit(1)
     if not FOOTBALL_API_KEY:
         print("ERROR: FOOTBALL_API_KEY no configurado.", file=sys.stderr)
         sys.exit(1)
@@ -266,20 +277,17 @@ async def main() -> None:
         sys.exit(0)  # transitorio — no marcar el workflow como fallido
 
     if not in_match_window(fd_matches):
-        print("Fuera de ventana de partidos — sin consumir cuota. Fin.")
+        print("Fuera de ventana de partidos. Fin.")
         return
 
-    if not check_budget(db):
-        return
-
-    print("⚽ Consultando partidos en vivo (API-Football)...")
+    print("⚽ Consultando partidos en vivo (ESPN)...")
     try:
-        af_live = await get_af_live()
+        espn_live = await get_espn_live()
     except Exception as e:
-        print(f"ERROR API-Football: {e!r}", file=sys.stderr)
+        print(f"ERROR ESPN: {e!r}", file=sys.stderr)
         sys.exit(0)
 
-    print(f"   {len(af_live)} partido(s) en vivo")
+    print(f"   {len(espn_live)} partido(s) en juego o recién terminados")
 
     prev_state = load_state(db)
     new_state  = dict(prev_state)
@@ -287,34 +295,23 @@ async def main() -> None:
     total_events = 0
     seen_ids: set[str] = set()
 
-    for fx in af_live:
-        fd_id = map_af_to_fd(fx, fd_matches)
+    for item in espn_live:
+        fd_id = map_to_fd_id(item["kickoff"], item["home_name"], item["away_name"], fd_matches)
         if fd_id is None:
-            print(f"  ⚠ Sin mapeo fd para {fx['teams']['home']['name']} vs {fx['teams']['away']['name']}")
+            print(f"  ⚠ Sin mapeo fd para {item['home_name']} vs {item['away_name']}")
             continue
         seen_ids.add(fd_id)
 
-        status = _AF_STATUS_NORM.get(fx["fixture"]["status"]["short"], "NS")
-        curr = {
-            "status":    status,
-            "minute":    fx["fixture"]["status"].get("elapsed"),
-            "home":      fx["goals"]["home"],
-            "away":      fx["goals"]["away"],
-            "home_name": fx["teams"]["home"]["name"],
-            "away_name": fx["teams"]["away"]["name"],
-        }
+        curr = {k: item[k] for k in ("status", "minute", "home", "away", "home_name", "away_name")}
 
-        for title, body in detect_events(prev_state.get(fd_id, {}), curr):
+        for title, body in detect_events(prev_state.get(fd_id) or {}, curr):
             print(f"  📣 {title}")
             send_notification(title, body, fd_id)
             total_events += 1
 
-        new_state[fd_id] = {k: v for k, v in curr.items()
-                            if k not in ("home_name", "away_name")} | {
-            "home_name": curr["home_name"], "away_name": curr["away_name"],
-        }
+        new_state[fd_id] = curr
         snapshot[fd_id] = {
-            "status": status,
+            "status": curr["status"],
             "minute": curr["minute"],
             "home":   curr["home"],
             "away":   curr["away"],
