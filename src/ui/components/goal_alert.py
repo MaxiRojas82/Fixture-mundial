@@ -12,28 +12,36 @@ class GoalAlert(ft.Container):
             size=13,
             color=COLORS["text"],
             weight=ft.FontWeight.BOLD,
-            expand=True,
+            text_align=ft.TextAlign.CENTER,
         )
         self._tap_hint = ft.Text(
             "Ver partido →",
             size=10,
             color=COLORS["text_secondary"],
             italic=True,
+            text_align=ft.TextAlign.CENTER,
         )
         super().__init__(
             content=ft.Column([
-                ft.Row([self._icon_text, self._label], spacing=10),
+                ft.Row(
+                    [self._icon_text, self._label],
+                    spacing=10,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
                 self._tap_hint,
-            ], spacing=2, tight=True),
+            ], spacing=3, tight=True,
+               horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=COLORS["card"],
             border=ft.border.all(2, COLORS["accent"]),
-            border_radius=14,
-            padding=ft.padding.symmetric(horizontal=16, vertical=12),
+            border_radius=22,
+            padding=ft.padding.symmetric(horizontal=20, vertical=14),
             visible=False,
             opacity=0,
             animate_opacity=300,
-            right=16,
-            top=72,
+            left=24,
+            right=24,
+            top=76,
             shadow=ft.BoxShadow(
                 blur_radius=20,
                 color=COLORS["accent"] + "66",

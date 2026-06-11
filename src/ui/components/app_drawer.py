@@ -277,8 +277,12 @@ def _build_drawer(page: ft.Page, service=None) -> ft.NavigationDrawer:
             page.go(route)
         return handler
 
-    def _on_theme_toggle(_):
+    async def _on_theme_toggle(_):
         toggle_theme()
+        try:
+            await page.client_storage.set_async("theme_dark", is_dark_mode())
+        except Exception:
+            pass
         page.theme_mode = ft.ThemeMode.DARK if is_dark_mode() else ft.ThemeMode.LIGHT
         page.bgcolor = COLORS["bg"]
         page.theme = app_theme()

@@ -42,8 +42,12 @@ def is_dark_mode() -> bool:
 
 
 def toggle_theme() -> None:
+    set_dark_mode(not _dark)
+
+
+def set_dark_mode(dark: bool) -> None:
     global _dark
-    _dark = not _dark
+    _dark = dark
     COLORS.update(COLORS_DARK if _dark else COLORS_LIGHT)
 
 

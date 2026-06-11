@@ -39,10 +39,19 @@ async def main(page: ft.Page) -> None:
         from src.ui.screens.bracket_screen import BracketScreen
         from src.ui.screens.prode_screen import ProdeScreen
         from src.ui.screens.match_screen import MatchScreen
-        from src.ui.theme import app_theme, COLORS
+        from src.ui.theme import app_theme, COLORS, set_dark_mode
         from src.ui.components.app_drawer import build_current_drawer
         from src.services.live_service import LiveService
         from src.services import push_notification_service as push_notif
+
+        # Restaurar el tema elegido por el usuario (oscuro por defecto)
+        try:
+            saved_dark = await page.client_storage.get_async("theme_dark")
+        except Exception:
+            saved_dark = None
+        if saved_dark is False:
+            set_dark_mode(False)
+            page.theme_mode = ft.ThemeMode.LIGHT
 
         page.theme = app_theme()
         page.bgcolor = COLORS["bg"]

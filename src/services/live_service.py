@@ -39,6 +39,10 @@ class LiveService:
         self._update_callbacks: list[UpdateCallback] = []
         self._event_callbacks: list[EventCallback] = []
         self._prev_live_ids: set[int] = set()
+        # Partidos ya vistos en esta sesión: la primera observación de cada
+        # partido es línea de base y no dispara alertas (evita que al abrir
+        # la app se repitan los goles/tarjetas ya ocurridos)
+        self._baselined: set[int] = set()
         self._running = False
         self._task: asyncio.Task | None = None
         self._load_error: str = ""
@@ -260,10 +264,9 @@ class LiveService:
             )
             self._matches[mid] = current
 
-            # Si la app arranca con el partido ya empezado, tomarlo como línea
-            # de base sin disparar alertas viejas (inicio/goles previos)
-            baseline = (prev.status == MatchStatus.SCHEDULED and (minute or 0) > 10)
-            if baseline:
+            # Primera observación del partido en esta sesión → línea de base
+            if mid not in self._baselined:
+                self._baselined.add(mid)
                 continue
 
             self._detect_events(prev, current)
@@ -336,7 +339,9 @@ class LiveService:
             if prev and self._status_order(m.status) < self._status_order(prev.status):
                 continue
             self._matches[m.id] = m
-            if prev:
+            first_time = m.id not in self._baselined
+            self._baselined.add(m.id)
+            if prev and not first_time:
                 self._detect_events(prev, m)
 
         # Partidos que desaparecieron del listado en vivo → probablemente terminaron
