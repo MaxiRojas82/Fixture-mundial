@@ -161,14 +161,49 @@ class MatchScreen:
     async def _load_ai(self) -> None:
         if not self._match:
             return
-        try:
-            text = await analyze_match(self._match)
-            self._ai_text.value = text
-            self._ai_text.italic = False
-            self._ai_text.color = COLORS["text"]
-        except Exception:
-            self._ai_text.value = "No se pudo cargar el análisis IA."
+        m = self._match
+        cache_key = f"ai_final_{m.id}"
+
+        # Partido terminado: si ya hay un análisis final guardado, usarlo
+        # (no se vuelve a generar — el último análisis queda fijo)
+        if m.status == MatchStatus.FINISHED:
+            try:
+                cached = await self._page.client_storage.get_async(cache_key)
+            except Exception:
+                cached = None
+            if cached:
+                self._ai_text.value = cached
+                self._ai_text.italic = False
+                self._ai_text.color = COLORS["text"]
+                self._page.update()
+                return
+
+        text = ""
+        for intento in range(2):  # un reintento automático si falla
+            try:
+                text = await analyze_match(m)
+                break
+            except Exception:
+                if intento == 0:
+                    await asyncio.sleep(2)
+
+        if not text:
+            self._ai_text.value = ("No se pudo cargar el análisis IA. "
+                                   "Salí y volvé a entrar para reintentar.")
+            self._page.update()
+            return
+
+        self._ai_text.value = text
+        self._ai_text.italic = False
+        self._ai_text.color = COLORS["text"]
         self._page.update()
+
+        # Partido terminado → este es el análisis final, queda guardado
+        if m.status == MatchStatus.FINISHED:
+            try:
+                await self._page.client_storage.set_async(cache_key, text)
+            except Exception:
+                pass
 
     def _refresh_ui(self) -> None:
         if not self._match:
