@@ -5,6 +5,10 @@ from src.models.match import Match
 
 load_dotenv()
 
+# gemini-1.5-flash fue retirado por Google (404); 2.0-flash no tiene cuota
+# en el plan gratuito. 2.5-flash funciona con la clave del proyecto.
+_MODEL = "gemini-2.5-flash"
+
 _client = None
 
 
@@ -12,8 +16,24 @@ def _get_client():
     global _client
     if _client is None:
         from google import genai
-        _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", "AQ.Ab8RN6LY3Bt_U68elS67T0UEOyjvBE24xmTL4kLSYEZ-a-n6JQ"))
+        _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
     return _client
+
+
+def _generate_sync(prompt: str) -> str:
+    """Corre en un thread: el import de google.genai tarda varios segundos
+    en Android y congelaba la UI si se hacía en el event loop."""
+    from google.genai import types
+    response = _get_client().models.generate_content(
+        model=_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            max_output_tokens=800,
+            # Sin presupuesto de razonamiento: respuesta directa y rápida
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+        ),
+    )
+    return (response.text or "").strip() or "Sin análisis disponible."
 
 
 async def analyze_match(match: Match) -> str:
@@ -42,11 +62,4 @@ Escribe un análisis breve (3 párrafos cortos) sobre:
 
 Sé conciso, apasionado y usa lenguaje de narración deportiva."""
 
-    from google.genai import types
-    response = await asyncio.to_thread(
-        _get_client().models.generate_content,
-        model="gemini-1.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(max_output_tokens=450),
-    )
-    return response.text
+    return await asyncio.to_thread(_generate_sync, prompt)
