@@ -4,7 +4,7 @@ project = "maxfixture"
 product = "MaxFixture - Mundial 2026"
 description = "Seguí el Mundial FIFA 2026 en tiempo real: resultados en vivo, fixture, tabla de posiciones, análisis IA y alertas de goles."
 version = "1.0.0"
-build_number = 11
+build_number = 12
 icon = "assets/icon.png"
 exclude = ["objective_c"]
 
