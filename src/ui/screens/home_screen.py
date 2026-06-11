@@ -206,6 +206,15 @@ class HomeScreen:
         self._notif_btn.icon = ft.Icons.NOTIFICATIONS_ROUNDED if enabled else ft.Icons.NOTIFICATIONS_OFF_ROUNDED
         self._notif_btn.icon_color = COLORS["primary"] if enabled else COLORS["text_secondary"]
         self._notif_btn.tooltip = "Notificaciones activadas" if enabled else "Notificaciones desactivadas"
+        self._page.open(ft.SnackBar(
+            content=ft.Text(
+                "🔔 Notificaciones activadas"
+                if enabled else "🔕 Notificaciones desactivadas",
+                color="#FFFFFF", size=14, weight=ft.FontWeight.W_600,
+            ),
+            bgcolor=COLORS["primary"] if enabled else "#37474F",
+            duration=2500,
+        ))
         self._page.update()
 
     def _render(self) -> None:
