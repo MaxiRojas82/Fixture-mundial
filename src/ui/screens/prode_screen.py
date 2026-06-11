@@ -272,7 +272,8 @@ class ProdeScreen:
         if 0 <= idx < len(self._groups):
             code = self._groups[idx].code
             if code not in self._leaderboards:
-                asyncio.create_task(self._load_leaderboard_for(code))
+                # run_task: los handlers de click corren fuera del event loop
+                self._page.run_task(self._load_leaderboard_for, code)
 
     # ── Render ────────────────────────────────────────────────────────────────
 
@@ -900,7 +901,8 @@ class ProdeScreen:
             ]
             self._page.update()
 
-        asyncio.create_task(_load_preds())
+        # run_task: los handlers de click corren fuera del event loop
+        self._page.run_task(_load_preds)
 
     def _dlg_create(self, _=None) -> None:
         field = ft.TextField(
