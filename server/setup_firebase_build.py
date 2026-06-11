@@ -220,6 +220,21 @@ def patch_desugaring() -> None:
     print("✓ App build.gradle — core library desugaring habilitado")
 
 
+def copy_fcm_handler() -> None:
+    """Copia la versión canónica de fcm_handler.dart al proyecto generado.
+
+    El build/ no está en git: sin esta copia, el handler (con la suscripción
+    al tema FCM) se perdería si se regenera la carpeta.
+    """
+    src = Path(__file__).parent / "fcm_handler.dart"
+    dst = FLUTTER_DIR / "lib" / "fcm_handler.dart"
+    if not src.exists():
+        print(f"⚠ No encontré {src} — se mantiene el fcm_handler.dart existente")
+        return
+    shutil.copy(src, dst)
+    print("✓ fcm_handler.dart copiado desde server/ (con suscripción al tema)")
+
+
 def patch_firebase_messaging_init() -> None:
     """Agrega FCMHandler.init() al main.dart generado por Flet."""
     path = FLUTTER_DIR / "lib" / "main.dart"
@@ -262,6 +277,7 @@ if __name__ == "__main__":
     patch_application_id()
     patch_desugaring()
     copy_google_services()
+    copy_fcm_handler()
     patch_firebase_messaging_init()
 
     print()
