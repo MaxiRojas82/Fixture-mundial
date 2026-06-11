@@ -21,6 +21,33 @@ def _parse_minute(clock: str) -> int | None:
         return None
 
 
+def _parse_details(comp: dict, home_team_id: str) -> list[dict]:
+    """Goles y tarjetas con jugador, desde competitions[].details."""
+    events: list[dict] = []
+    for d in comp.get("details", []) or []:
+        dtype = ((d.get("type") or {}).get("text") or "")
+        athletes = d.get("athletesInvolved") or []
+        player = (athletes[0] or {}).get("displayName") or "" if athletes else ""
+        team_id = str((d.get("team") or {}).get("id") or "")
+        minute = _parse_minute(((d.get("clock") or {}).get("displayValue") or "")) or 0
+        side = "home" if team_id == home_team_id else "away"
+
+        if d.get("scoringPlay"):
+            low = dtype.lower()
+            detail = ("Penalty" if "penalty" in low
+                      else "Own Goal" if "own" in low
+                      else "Normal Goal")
+            events.append({"minute": minute, "side": side, "player": player,
+                          "type": "Goal", "detail": detail})
+        elif d.get("redCard"):
+            events.append({"minute": minute, "side": side, "player": player,
+                          "type": "Card", "detail": "Red Card"})
+        elif d.get("yellowCard"):
+            events.append({"minute": minute, "side": side, "player": player,
+                          "type": "Card", "detail": "Yellow Card"})
+    return events
+
+
 async def get_live() -> list[dict]:
     """Partidos en juego o recién terminados, según ESPN.
 
@@ -76,6 +103,7 @@ async def get_live() -> list[dict]:
             except (TypeError, ValueError):
                 return None
 
+        home_team_id = str((home_c.get("team") or {}).get("id") or "")
         out.append({
             "kickoff":    kickoff,
             "home":       (home_c.get("team") or {}).get("displayName") or "",
@@ -84,5 +112,6 @@ async def get_live() -> list[dict]:
             "minute":     _parse_minute((ev.get("status") or {}).get("displayClock") or ""),
             "home_goals": _score(home_c),
             "away_goals": _score(away_c),
+            "events":     _parse_details(comp, home_team_id),
         })
     return out

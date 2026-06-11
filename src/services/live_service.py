@@ -8,7 +8,7 @@ from typing import Callable
 from dotenv import load_dotenv
 from src.api.football_client import FootballClient
 from src.api import espn_client
-from src.models.match import Match, MatchStatus, Score, LIVE_STATUSES
+from src.models.match import Match, MatchEvent, MatchStatus, Score, LIVE_STATUSES
 from src.models.standing import TeamStanding
 from src.services import live_snapshot
 
@@ -217,8 +217,9 @@ class LiveService:
             return 1
         return 0
 
-    def _merge_snapshot(self, snap: dict[int, dict]) -> None:
-        """Aplica el snapshot del notificador (API-Football vía Firestore)."""
+    def _merge_snapshot(self, snap: dict[int, dict],
+                        events_by_id: dict[int, list[dict]] | None = None) -> None:
+        """Aplica un snapshot en vivo (ESPN directo o Firestore del notificador)."""
         for mid, s in snap.items():
             local = self._matches.get(mid)
             if not local:
@@ -232,17 +233,45 @@ class LiveService:
                 home=sh if sh is not None else local.score.home,
                 away=sa if sa is not None else local.score.away,
             )
+
+            # Eventos con jugador (solo disponibles vía ESPN directo)
+            new_events = None
+            if events_by_id is not None and mid in events_by_id:
+                new_events = [
+                    MatchEvent(
+                        time=e["minute"],
+                        team_id=local.home.id if e["side"] == "home" else local.away.id,
+                        player=e["player"],
+                        type=e["type"],
+                        detail=e["detail"],
+                    )
+                    for e in events_by_id[mid]
+                ]
+
             if (status == local.status and minute == local.elapsed
-                    and new_score == local.score):
+                    and new_score == local.score
+                    and (new_events is None or len(new_events) == len(local.events))):
                 continue
+
             prev = local
-            current = replace(local, status=status, elapsed=minute, score=new_score)
+            current = replace(
+                local, status=status, elapsed=minute, score=new_score,
+                events=new_events if new_events is not None else local.events,
+            )
             self._matches[mid] = current
+
+            # Si la app arranca con el partido ya empezado, tomarlo como línea
+            # de base sin disparar alertas viejas (inicio/goles previos)
+            baseline = (prev.status == MatchStatus.SCHEDULED and (minute or 0) > 10)
+            if baseline:
+                continue
+
             self._detect_events(prev, current)
-            # Goles sin detalle de eventos: detectar por diferencia de marcador
-            ph, pa = prev.score.home or 0, prev.score.away or 0
-            ch, ca = current.score.home or 0, current.score.away or 0
-            if prev.status != MatchStatus.SCHEDULED:
+
+            # Goles sin detalle de eventos (snapshot de Firestore): por marcador
+            if new_events is None and prev.status != MatchStatus.SCHEDULED:
+                ph, pa = prev.score.home or 0, prev.score.away or 0
+                ch, ca = current.score.home or 0, current.score.away or 0
                 marcador = f"{current.home.name} {ch} - {ca} {current.away.name}"
                 if ch > ph:
                     self._fire_event(current, f"⚽  GOL de {current.home.name} — {marcador}", "goal")
@@ -271,6 +300,7 @@ class LiveService:
         try:
             espn_items = await espn_client.get_live()
             espn_snap: dict[int, dict] = {}
+            espn_events: dict[int, list[dict]] = {}
             for it in espn_items:
                 local = self._find_local_by_schedule(it["kickoff"], it["home"], it["away"])
                 if local:
@@ -278,8 +308,9 @@ class LiveService:
                         "status": it["status"], "minute": it["minute"],
                         "home": it["home_goals"], "away": it["away_goals"],
                     }
+                    espn_events[local.id] = it.get("events") or []
             if espn_snap:
-                self._merge_snapshot(espn_snap)
+                self._merge_snapshot(espn_snap, espn_events)
         except Exception:
             pass
 

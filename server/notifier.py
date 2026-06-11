@@ -154,14 +154,32 @@ async def get_espn_live() -> list[dict]:
             except (TypeError, ValueError):
                 return None
 
+        # Goleadores por equipo, en orden, desde los detalles del partido
+        home_id = str((home_c.get("team") or {}).get("id") or "")
+        scorers_home: list[str] = []
+        scorers_away: list[str] = []
+        for d in comp.get("details", []) or []:
+            if not d.get("scoringPlay"):
+                continue
+            athletes = d.get("athletesInvolved") or []
+            player = (athletes[0] or {}).get("displayName") or "" if athletes else ""
+            clock = ((d.get("clock") or {}).get("displayValue") or "").strip()
+            label = f"{player} {clock}".strip()
+            if str((d.get("team") or {}).get("id") or "") == home_id:
+                scorers_home.append(label)
+            else:
+                scorers_away.append(label)
+
         out.append({
-            "kickoff":   kickoff,
-            "home_name": (home_c.get("team") or {}).get("displayName") or "",
-            "away_name": (away_c.get("team") or {}).get("displayName") or "",
-            "status":    short,
-            "minute":    _parse_minute((ev.get("status") or {}).get("displayClock") or ""),
-            "home":      _score(home_c),
-            "away":      _score(away_c),
+            "kickoff":      kickoff,
+            "home_name":    (home_c.get("team") or {}).get("displayName") or "",
+            "away_name":    (away_c.get("team") or {}).get("displayName") or "",
+            "status":       short,
+            "minute":       _parse_minute((ev.get("status") or {}).get("displayClock") or ""),
+            "home":         _score(home_c),
+            "away":         _score(away_c),
+            "scorers_home": scorers_home,
+            "scorers_away": scorers_away,
         })
     return out
 
@@ -231,10 +249,16 @@ def detect_events(prev: dict, curr: dict) -> list[tuple[str, str]]:
 
     if prev and ps not in ("NS", ""):
         ph, pa = prev.get("home") or 0, prev.get("away") or 0
-        for _ in range(max(0, ch - ph)):
-            events.append((f"⚽ ¡GOL de {home}!", f"{home} {ch} – {ca} {away}"))
-        for _ in range(max(0, ca - pa)):
-            events.append((f"⚽ ¡GOL de {away}!", f"{home} {ch} – {ca} {away}"))
+        scorers_h = curr.get("scorers_home") or []
+        scorers_a = curr.get("scorers_away") or []
+        for i in range(max(0, ch - ph)):
+            idx = ph + i
+            who = f"{scorers_h[idx]} · " if idx < len(scorers_h) else ""
+            events.append((f"⚽ ¡GOL de {home}!", f"{who}{home} {ch} – {ca} {away}"))
+        for i in range(max(0, ca - pa)):
+            idx = pa + i
+            who = f"{scorers_a[idx]} · " if idx < len(scorers_a) else ""
+            events.append((f"⚽ ¡GOL de {away}!", f"{who}{home} {ch} – {ca} {away}"))
 
     return events
 
@@ -302,7 +326,9 @@ async def main() -> None:
             continue
         seen_ids.add(fd_id)
 
-        curr = {k: item[k] for k in ("status", "minute", "home", "away", "home_name", "away_name")}
+        curr = {k: item[k] for k in ("status", "minute", "home", "away",
+                                     "home_name", "away_name",
+                                     "scorers_home", "scorers_away")}
 
         for title, body in detect_events(prev_state.get(fd_id) or {}, curr):
             print(f"  📣 {title}")
