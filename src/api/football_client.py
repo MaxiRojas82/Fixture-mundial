@@ -1,7 +1,7 @@
 import asyncio
 import os
 import httpx
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from src.models.match import Match, Team, Score, MatchStatus, MatchEvent
 from src.models.standing import TeamStanding
@@ -258,11 +258,18 @@ class FootballClient:
         return self.parse_fixtures(await self.get_fixtures_raw())
 
     async def get_live_fixtures(self) -> list[Match]:
+        # El filtro status= devuelve siempre vacío para esta competición
+        # (bug del API) → consultar por fecha y filtrar del lado del cliente.
+        now = datetime.now(timezone.utc)
         raw = await self._get(
             f"{BASE_URL}/competitions/{COMPETITION_ID}/matches",
-            params={"status": "IN_PLAY,PAUSED"},
+            params={
+                "dateFrom": (now - timedelta(days=1)).strftime("%Y-%m-%d"),
+                "dateTo": (now + timedelta(days=1)).strftime("%Y-%m-%d"),
+            },
         )
-        return [self._parse_match(m) for m in raw.get("matches", [])]
+        matches = [self._parse_match(m) for m in raw.get("matches", [])]
+        return [m for m in matches if m.is_live]
 
     async def get_match(self, fixture_id: int) -> Match | None:
         async with httpx.AsyncClient(timeout=15.0) as client:

@@ -1,13 +1,15 @@
 import asyncio
 import json
 import os
+from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Callable
 from dotenv import load_dotenv
 from src.api.football_client import FootballClient
-from src.models.match import Match, MatchStatus, LIVE_STATUSES
+from src.models.match import Match, MatchStatus, Score, LIVE_STATUSES
 from src.models.standing import TeamStanding
+from src.services import live_snapshot
 
 load_dotenv()
 
@@ -101,13 +103,25 @@ class LiveService:
 
     async def _poll_loop(self) -> None:
         while self._running:
-            live = [m for m in self._matches.values() if m.status in _LIVE_PLAYING]
-            if live:
-                # Hay partidos en curso → poll frecuente
-                await asyncio.sleep(POLL_INTERVAL)
+            # Consultar primero, dormir después — así el primer poll es inmediato
+            try:
+                await self._fetch_live()
+            except Exception:
+                pass
+
+            now = datetime.now(timezone.utc)
+            live = [m for m in self._matches.values() if m.is_live]
+            # Partidos que ya deberían haber empezado según su horario pero
+            # siguen "programados" (la API a veces tarda en reflejarlo)
+            in_window = [
+                m for m in self._matches.values()
+                if m.status == MatchStatus.SCHEDULED
+                and m.date <= now <= m.date + timedelta(hours=3)
+            ]
+            if live or in_window:
+                sleep_secs = POLL_INTERVAL
             else:
-                # Sin partidos en vivo → dormir hasta 2 min antes del próximo
-                now = datetime.now(timezone.utc)
+                # Sin partidos en curso → dormir hasta 2 min antes del próximo
                 upcoming = [
                     m for m in self._matches.values()
                     if m.status == MatchStatus.SCHEDULED and m.date > now
@@ -118,11 +132,7 @@ class LiveService:
                     sleep_secs = max(POLL_INTERVAL, min(secs, 1800))
                 else:
                     sleep_secs = 1800  # 30 min si no hay más partidos
-                await asyncio.sleep(sleep_secs)
-            try:
-                await self._fetch_live()
-            except Exception:
-                pass
+            await asyncio.sleep(sleep_secs)
 
     @property
     def load_error(self) -> str:
@@ -196,13 +206,70 @@ class LiveService:
                     pass
             self._notify_update()
 
+    # Orden de progreso de un partido — nunca retroceder de estado
+    # (football-data a veces vuelve a reportar TIMED un partido ya iniciado)
+    @staticmethod
+    def _status_order(status: MatchStatus) -> int:
+        if status == MatchStatus.FINISHED:
+            return 2
+        if status in LIVE_STATUSES:
+            return 1
+        return 0
+
+    def _merge_snapshot(self, snap: dict[int, dict]) -> None:
+        """Aplica el snapshot del notificador (API-Football vía Firestore)."""
+        for mid, s in snap.items():
+            local = self._matches.get(mid)
+            if not local:
+                continue
+            status = MatchStatus.from_short(str(s.get("status") or "NS"))
+            if self._status_order(status) < self._status_order(local.status):
+                continue
+            minute = s.get("minute")
+            sh, sa = s.get("home"), s.get("away")
+            new_score = Score(
+                home=sh if sh is not None else local.score.home,
+                away=sa if sa is not None else local.score.away,
+            )
+            if (status == local.status and minute == local.elapsed
+                    and new_score == local.score):
+                continue
+            prev = local
+            current = replace(local, status=status, elapsed=minute, score=new_score)
+            self._matches[mid] = current
+            self._detect_events(prev, current)
+            # Goles sin detalle de eventos: detectar por diferencia de marcador
+            ph, pa = prev.score.home or 0, prev.score.away or 0
+            ch, ca = current.score.home or 0, current.score.away or 0
+            if prev.status != MatchStatus.SCHEDULED:
+                marcador = f"{current.home.name} {ch} - {ca} {current.away.name}"
+                if ch > ph:
+                    self._fire_event(current, f"⚽  GOL de {current.home.name} — {marcador}", "goal")
+                if ca > pa:
+                    self._fire_event(current, f"⚽  GOL de {current.away.name} — {marcador}", "goal")
+
     async def _fetch_live(self) -> None:
-        live_matches = await self._client.get_live_fixtures()
+        # 1) Snapshot del notificador (API-Football, la fuente más confiable)
+        try:
+            snap = await live_snapshot.fetch()
+            if snap:
+                self._merge_snapshot(snap)
+        except Exception:
+            pass
+
+        # 2) football-data directo (gratuito; a veces tarda o retrocede)
+        try:
+            live_matches = await self._client.get_live_fixtures()
+        except Exception:
+            self._notify_update()
+            return
         current_live_ids: set[int] = set()
 
         for m in live_matches:
             current_live_ids.add(m.id)
             prev = self._matches.get(m.id)
+            if prev and self._status_order(m.status) < self._status_order(prev.status):
+                continue
             self._matches[m.id] = m
             if prev:
                 self._detect_events(prev, m)
