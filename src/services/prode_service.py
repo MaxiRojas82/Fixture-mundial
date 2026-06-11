@@ -127,23 +127,28 @@ async def join_group(code: str, uid: str, display_name: str) -> ProdeGroup | Non
     return group
 
 
-async def get_predictions_for_users(user_ids: list[str]) -> list[Prediction]:
-    if not is_configured() or not user_ids:
-        return []
-    query = {
-        "structuredQuery": {
-            "from": [{"collectionId": "predictions"}],
-            "where": {
-                "fieldFilter": {
-                    "field": {"fieldPath": "userId"},
-                    "op": "IN",
-                    "value": {"arrayValue": {
-                        "values": [{"stringValue": uid} for uid in user_ids[:10]]
-                    }},
-                }
-            },
-        }
-    }
+async def delete_group(code: str) -> None:
+    if not is_configured():
+        return
+    async with httpx.AsyncClient() as c:
+        await c.delete(
+            f"{_BASE}/groups/{code}",
+            params={"key": _API_KEY},
+            timeout=5,
+        )
+
+
+async def leave_group(code: str, uid: str) -> None:
+    group = await get_group(code)
+    if group is None:
+        return
+    if uid in group.member_ids:
+        group.member_ids.remove(uid)
+    group.member_names.pop(uid, None)
+    await create_group(group)
+
+
+async def _query_predictions(query: dict) -> list[Prediction]:
     async with httpx.AsyncClient() as c:
         resp = await c.post(
             f"{_BASE}:runQuery",
@@ -166,3 +171,44 @@ async def get_predictions_for_users(user_ids: list[str]) -> list[Prediction]:
             away_goals=int(d.get("awayGoals") or 0),
         ))
     return results
+
+
+async def get_predictions_for_users(user_ids: list[str]) -> list[Prediction]:
+    if not is_configured() or not user_ids:
+        return []
+    results: list[Prediction] = []
+    # El operador IN de Firestore acepta máximo 10 valores → consultar en lotes
+    for i in range(0, len(user_ids), 10):
+        chunk = user_ids[i:i + 10]
+        results.extend(await _query_predictions({
+            "structuredQuery": {
+                "from": [{"collectionId": "predictions"}],
+                "where": {
+                    "fieldFilter": {
+                        "field": {"fieldPath": "userId"},
+                        "op": "IN",
+                        "value": {"arrayValue": {
+                            "values": [{"stringValue": uid} for uid in chunk]
+                        }},
+                    }
+                },
+            }
+        }))
+    return results
+
+
+async def get_predictions_for_match(match_id: int) -> list[Prediction]:
+    if not is_configured():
+        return []
+    return await _query_predictions({
+        "structuredQuery": {
+            "from": [{"collectionId": "predictions"}],
+            "where": {
+                "fieldFilter": {
+                    "field": {"fieldPath": "matchId"},
+                    "op": "EQUAL",
+                    "value": {"integerValue": str(match_id)},
+                }
+            },
+        }
+    })

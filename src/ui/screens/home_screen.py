@@ -221,9 +221,11 @@ class HomeScreen:
         self._body.controls.append(self._date_container)
 
         # Si el tab seleccionado es hoy y aún no empezó el Mundial → countdown
+        # (los partidos del día se muestran igual, debajo del contador)
+        showed_countdown = False
         if before_wc and _selected_date == today:
             self._body.controls.append(self._build_countdown_card())
-            return
+            showed_countdown = True
 
         # Partidos filtrados por día
         all_matches = self._service.matches
@@ -245,7 +247,7 @@ class HomeScreen:
                     build_match_card(m, on_tap=lambda _, mid=m.id: self._page.go(f"/match/{mid}"))
                 )
 
-        if not live and not non_live:
+        if not live and not non_live and not showed_countdown:
             err = self._service.load_error
             if err and not self._service.matches:
                 msg = ft.Column([
@@ -282,14 +284,22 @@ class HomeScreen:
     # ── Countdown loop ─────────────────────────────────────────────────────
 
     async def _run_countdown(self) -> None:
-        target = self._get_wc_start()
-        if not target:
-            return
         while True:
+            # Recalcular en cada tick: el horario real del primer partido
+            # puede conocerse recién cuando terminan de cargar los fixtures
+            target = self._get_wc_start()
+            if not target:
+                return
             now = datetime.now(timezone.utc)
             delta = target - now
             if delta.total_seconds() <= 0:
-                break
+                # Empezó el Mundial — re-renderizar para quitar el contador
+                self._render()
+                try:
+                    self._page.update()
+                except Exception:
+                    pass
+                return
             total = int(delta.total_seconds())
             self._cd_days.value  = f"{total // 86400:02d}"
             self._cd_hours.value = f"{(total % 86400) // 3600:02d}"

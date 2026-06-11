@@ -24,7 +24,6 @@ def _gen_code() -> str:
 
 
 def _teams_known(m: Match) -> bool:
-    """True cuando ambos equipos ya están definidos (no TBD)."""
     return m.home.id != 0 and m.away.id != 0
 
 
@@ -76,23 +75,24 @@ def _flag(name: str, team_id: int = 0, size: int = 26) -> ft.Control:
 
 
 class ProdeScreen:
-    _UID   = "prode_uid"
-    _NAME  = "prode_name"
-    _GROUP = "prode_group"
-    _PREDS = "prode_preds"
+    _UID    = "prode_uid"
+    _NAME   = "prode_name"
+    _GROUP  = "prode_group"   # legacy single-code key (kept for migration)
+    _GROUPS = "prode_groups"  # new: JSON list of codes
+    _PREDS  = "prode_preds"
 
     def __init__(self, page: ft.Page, live_service: LiveService) -> None:
         self._page = page
         self._service = live_service
         self._user: ProdeUser | None = None
-        self._group: ProdeGroup | None = None
+        self._groups: list[ProdeGroup] = []
+        self._active_idx: int = 0
         self._preds: dict[int, tuple[int, int]] = {}
-        self._leaderboard: list[LeaderboardEntry] = []
+        self._leaderboards: dict[str, list[LeaderboardEntry]] = {}
 
         self._header_name = ft.Text("Prode", size=18, weight=ft.FontWeight.BOLD, color=COLORS["text"])
         self._header_sub  = ft.Text("", size=11, color=COLORS["text_secondary"])
-        self._banner_row  = ft.Row([], alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                                   vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        self._banner_content = ft.Column([], spacing=6, tight=True)
         self._preds_col = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, expand=True)
         self._tabla_col = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, expand=True)
 
@@ -118,7 +118,7 @@ class ProdeScreen:
                 ft.Column([
                     self._build_topbar(),
                     ft.Container(
-                        content=self._banner_row,
+                        content=self._banner_content,
                         padding=ft.padding.symmetric(horizontal=16, vertical=8),
                         bgcolor=COLORS["card"],
                         border=ft.border.only(bottom=ft.BorderSide(1, COLORS["card_border"])),
@@ -161,9 +161,8 @@ class ProdeScreen:
         try:
             uid  = await self._page.client_storage.get_async(self._UID)
             name = await self._page.client_storage.get_async(self._NAME)
-            code = await self._page.client_storage.get_async(self._GROUP) or ""
         except Exception:
-            uid, name, code = None, None, ""
+            uid, name = None, None
 
         if not uid or not name:
             self._show_setup()
@@ -175,16 +174,37 @@ class ProdeScreen:
         except Exception:
             self._preds = {}
 
-        self._user = ProdeUser(id=uid, display_name=name, group_code=code)
+        self._user = ProdeUser(id=uid, display_name=name)
 
-        if code:
+        # Load group codes list (with migration from legacy single-code key)
+        codes: list[str] = []
+        try:
+            saved_list = await self._page.client_storage.get_async(self._GROUPS)
+            if saved_list:
+                codes = json.loads(saved_list)
+        except Exception:
+            codes = []
+
+        if not codes:
             try:
-                self._group = await firebase.get_group(code)
-                if self._group is None:
-                    await self._page.client_storage.set_async(self._GROUP, "")
-                    self._user.group_code = ""
+                old_code = await self._page.client_storage.get_async(self._GROUP) or ""
+                if old_code:
+                    codes = [old_code]
             except Exception:
                 pass
+
+        # Load all groups from Firebase
+        self._groups = []
+        for code in codes:
+            try:
+                grp = await firebase.get_group(code)
+                if grp is not None:
+                    self._groups.append(grp)
+            except Exception:
+                pass
+
+        self._active_idx = 0
+        await self._save_groups()
 
         self._render_header()
         self._render_banner()
@@ -192,14 +212,15 @@ class ProdeScreen:
         self._render_tabla()
         self._page.update()
 
-        if self._group:
-            await self._load_leaderboard()
+        for grp in self._groups:
+            await self._load_leaderboard_for(grp.code)
 
-    async def _load_leaderboard(self) -> None:
-        if not self._group or not self._user:
+    async def _load_leaderboard_for(self, code: str) -> None:
+        grp = next((g for g in self._groups if g.code == code), None)
+        if not grp:
             return
         try:
-            all_preds = await firebase.get_predictions_for_users(self._group.member_ids)
+            all_preds = await firebase.get_predictions_for_users(grp.member_ids)
         except Exception:
             return
 
@@ -211,9 +232,9 @@ class ProdeScreen:
         board: dict[str, LeaderboardEntry] = {
             uid: LeaderboardEntry(
                 user_id=uid,
-                display_name=self._group.member_names.get(uid, uid[:6]),
+                display_name=grp.member_names.get(uid, uid[:6]),
             )
-            for uid in self._group.member_ids
+            for uid in grp.member_ids
         }
 
         for pred in all_preds:
@@ -230,9 +251,28 @@ class ProdeScreen:
             elif pts == 2:
                 entry.correct += 1
 
-        self._leaderboard = sorted(board.values(), key=lambda e: (-e.points, -e.exact))
+        self._leaderboards[code] = sorted(board.values(), key=lambda e: (-e.points, -e.exact))
         self._render_tabla()
         self._page.update()
+
+    async def _save_groups(self) -> None:
+        codes = [g.code for g in self._groups]
+        try:
+            await self._page.client_storage.set_async(self._GROUPS, json.dumps(codes))
+            primary = codes[0] if codes else ""
+            await self._page.client_storage.set_async(self._GROUP, primary)
+        except Exception:
+            pass
+
+    def _set_active_group(self, idx: int) -> None:
+        self._active_idx = idx
+        self._render_banner()
+        self._render_tabla()
+        self._page.update()
+        if 0 <= idx < len(self._groups):
+            code = self._groups[idx].code
+            if code not in self._leaderboards:
+                asyncio.create_task(self._load_leaderboard_for(code))
 
     # ── Render ────────────────────────────────────────────────────────────────
 
@@ -258,20 +298,73 @@ class ProdeScreen:
 
     def _render_banner(self) -> None:
         if not self._user:
-            self._banner_row.controls = []
+            self._banner_content.controls = []
             return
-        if self._group:
-            self._banner_row.controls = [
-                ft.Column([
-                    ft.Text(self._group.name, size=14,
-                           weight=ft.FontWeight.BOLD, color=COLORS["text"]),
-                    ft.Text(
-                        f"Código: {self._group.code}  ·  "
-                        f"{len(self._group.member_ids)} miembro"
-                        f"{'s' if len(self._group.member_ids) != 1 else ''}",
-                        size=11, color=COLORS["text_secondary"],
-                    ),
-                ], spacing=2, expand=True),
+
+        create_btn = ft.TextButton(
+            "+ Crear", on_click=self._dlg_create,
+            style=ft.ButtonStyle(color=COLORS["primary"]),
+        )
+        join_btn = ft.TextButton(
+            "Unirse", on_click=self._dlg_join,
+            style=ft.ButtonStyle(color=COLORS["text_secondary"]),
+        )
+
+        if not self._groups:
+            self._banner_content.controls = [
+                ft.Row([
+                    ft.Text("Sin grupos", size=13, color=COLORS["text_secondary"], expand=True),
+                    create_btn,
+                    join_btn,
+                ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ]
+            return
+
+        # Chips: one per group, active one highlighted
+        chips: list[ft.Control] = []
+        for i, grp in enumerate(self._groups):
+            active = i == self._active_idx
+
+            def _make_tap(idx: int):
+                def _handler(_): self._set_active_group(idx)
+                return _handler
+
+            chips.append(ft.Container(
+                content=ft.Text(
+                    grp.name, size=12, no_wrap=True,
+                    color="#FFFFFF" if active else COLORS["text_secondary"],
+                    weight=ft.FontWeight.W_600 if active else ft.FontWeight.NORMAL,
+                ),
+                bgcolor=COLORS["primary"] if active else "transparent",
+                border=ft.border.all(1, COLORS["primary"] if active else COLORS["card_border"]),
+                border_radius=14,
+                padding=ft.padding.symmetric(horizontal=10, vertical=5),
+                on_click=_make_tap(i),
+                ink=True,
+            ))
+
+        active_grp = self._groups[self._active_idx]
+        is_owner = self._user is not None and active_grp.owner_id == self._user.id
+
+        def _delete_leave_tap(_):
+            self._dlg_delete_or_leave(active_grp, is_owner)
+
+        self._banner_content.controls = [
+            # Row 1: group chips + action buttons
+            ft.Row(
+                [*chips, create_btn, join_btn],
+                spacing=6,
+                scroll=ft.ScrollMode.AUTO,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            # Row 2: active group metadata + share + delete/leave
+            ft.Row([
+                ft.Text(
+                    f"Código: {active_grp.code}  ·  "
+                    f"{len(active_grp.member_ids)} miembro"
+                    f"{'s' if len(active_grp.member_ids) != 1 else ''}",
+                    size=11, color=COLORS["text_secondary"], expand=True,
+                ),
                 ft.ElevatedButton(
                     "Compartir",
                     icon=ft.Icons.IOS_SHARE,
@@ -282,17 +375,17 @@ class ProdeScreen:
                         shape=ft.RoundedRectangleBorder(radius=10),
                         side=ft.BorderSide(1, COLORS["primary"] + "55"),
                     ),
-                    height=36,
+                    height=32,
                 ),
-            ]
-        else:
-            self._banner_row.controls = [
-                ft.Text("Sin grupo", size=13, color=COLORS["text_secondary"], expand=True),
-                ft.TextButton("+ Crear", on_click=self._dlg_create,
-                             style=ft.ButtonStyle(color=COLORS["primary"])),
-                ft.TextButton("Unirse", on_click=self._dlg_join,
-                             style=ft.ButtonStyle(color=COLORS["text_secondary"])),
-            ]
+                ft.IconButton(
+                    icon=ft.Icons.DELETE_OUTLINE if is_owner else ft.Icons.LOGOUT,
+                    icon_color=COLORS["red"],
+                    icon_size=20,
+                    tooltip="Eliminar grupo" if is_owner else "Salir del grupo",
+                    on_click=_delete_leave_tap,
+                ),
+            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ]
 
     def _build_scoring_info(self) -> ft.Container:
         def _row(icon: str, label: str, pts: str, pts_color: str) -> ft.Row:
@@ -373,7 +466,7 @@ class ProdeScreen:
         if not self._user:
             return
 
-        if not self._group:
+        if not self._groups:
             self._tabla_col.controls.append(
                 ft.Container(
                     content=ft.Column([
@@ -400,14 +493,18 @@ class ProdeScreen:
             )
             return
 
-        if not self._leaderboard:
-            entries: list[LeaderboardEntry] = [LeaderboardEntry(
+        if self._active_idx >= len(self._groups):
+            return
+
+        active_grp = self._groups[self._active_idx]
+        entries = self._leaderboards.get(active_grp.code)
+
+        if not entries:
+            entries = [LeaderboardEntry(
                 user_id=self._user.id,
                 display_name=self._user.display_name,
                 points=self._my_points(),
             )]
-        else:
-            entries = self._leaderboard
 
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
         rows: list[ft.Control] = [
@@ -465,6 +562,8 @@ class ProdeScreen:
         pred     = self._preds.get(m.id)
         can_edit = _can_predict(m)
         known    = _teams_known(m)
+        # Pronósticos ajenos visibles recién cuando cerró la carga (1h antes)
+        can_view = known and not can_edit and bool(self._groups)
 
         if m.is_live:
             chip, chip_c = f"🔴 {m.elapsed}'", COLORS["live"]
@@ -494,7 +593,6 @@ class ProdeScreen:
         home_color = COLORS["text"] if known else COLORS["text_secondary"]
         away_color = COLORS["text"] if known else COLORS["text_secondary"]
 
-        # Widget central: marcador pronosticado o "vs"
         if pred is not None:
             def _score_chip(val: int) -> ft.Container:
                 return ft.Container(
@@ -544,6 +642,10 @@ class ProdeScreen:
             rows.append(ft.Text("Tocá para cargar pronóstico →", size=11,
                                color=COLORS["text_secondary"], italic=True))
 
+        if can_view:
+            rows.append(ft.Text("👥 Tocá para ver los pronósticos del grupo", size=11,
+                               color=COLORS["text_secondary"], italic=True))
+
         if m.status == MatchStatus.FINISHED and pred and m.score.home is not None and m.score.away is not None:
             pts = calc_points(pred[0], pred[1], m.score.home, m.score.away)
             border = COLORS["green"] + "66" if pts >= 2 else COLORS["red"] + "44"
@@ -554,6 +656,13 @@ class ProdeScreen:
         else:
             border = COLORS["card_border"]
 
+        if can_edit:
+            tap = lambda _, match=m: self._dlg_predict(match)
+        elif can_view:
+            tap = lambda _, match=m: self._dlg_group_preds(match)
+        else:
+            tap = None
+
         return ft.Container(
             content=ft.Column(rows, spacing=8),
             padding=ft.padding.all(14),
@@ -563,8 +672,8 @@ class ProdeScreen:
             border=ft.border.all(1, border),
             shadow=ft.BoxShadow(blur_radius=8, color=COLORS["shadow"], offset=ft.Offset(0, 2)),
             opacity=0.55 if not known else 1.0,
-            on_click=(lambda _, match=m: self._dlg_predict(match)) if can_edit else None,
-            ink=can_edit,
+            on_click=tap,
+            ink=tap is not None,
         )
 
     # ── Dialogs ───────────────────────────────────────────────────────────────
@@ -694,6 +803,104 @@ class ProdeScreen:
         )
         self._page.open(dlg[0])
 
+    def _dlg_group_preds(self, m: Match) -> None:
+        if not self._groups or self._active_idx >= len(self._groups):
+            return
+        grp = self._groups[self._active_idx]
+        finished = (m.status == MatchStatus.FINISHED
+                    and m.score.home is not None and m.score.away is not None)
+
+        body = ft.Column([
+            ft.Row([ft.ProgressRing(width=22, height=22, stroke_width=2,
+                                    color=COLORS["primary"])],
+                   alignment=ft.MainAxisAlignment.CENTER),
+        ], spacing=6, tight=True, scroll=ft.ScrollMode.AUTO)
+
+        dlg = ft.AlertDialog(
+            title=ft.Column([
+                ft.Text(f"{team_name(m.home.name)} vs {team_name(m.away.name)}",
+                       size=15, weight=ft.FontWeight.BOLD, color=COLORS["text"]),
+                ft.Text(f"Pronósticos · {grp.name}", size=12,
+                       color=COLORS["text_secondary"]),
+            ], spacing=2, tight=True),
+            content=ft.Container(content=body, width=300,
+                                 height=min(60 + 44 * len(grp.member_ids), 360)),
+            bgcolor=COLORS["surface"],
+            actions=[
+                ft.TextButton("Cerrar", on_click=lambda _: self._page.close(dlg),
+                             style=ft.ButtonStyle(color=COLORS["text_secondary"])),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self._page.open(dlg)
+
+        def _member_row(name: str, is_me: bool, hg: int | None, ag: int | None) -> ft.Control:
+            if hg is not None and ag is not None:
+                pred_w: ft.Control = ft.Text(f"{hg} – {ag}", size=14,
+                                             weight=ft.FontWeight.BOLD, color=COLORS["text"])
+                pts_w: ft.Control | None = None
+                if finished:
+                    pts = calc_points(hg, ag, m.score.home, m.score.away)
+                    pts_color = (COLORS["green"] if pts == 3
+                                 else COLORS["primary"] if pts == 2 else COLORS["red"])
+                    pts_w = ft.Container(
+                        content=ft.Text(f"+{pts}", size=11, color=pts_color,
+                                       weight=ft.FontWeight.BOLD),
+                        bgcolor=pts_color + "22",
+                        border_radius=5,
+                        padding=ft.padding.symmetric(horizontal=7, vertical=2),
+                    )
+            else:
+                pred_w = ft.Text("Sin pronóstico", size=12,
+                                color=COLORS["text_secondary"], italic=True)
+                pts_w = None
+
+            controls: list[ft.Control] = [
+                ft.Text(
+                    name + (" ★" if is_me else ""),
+                    size=13,
+                    color=COLORS["primary"] if is_me else COLORS["text"],
+                    weight=ft.FontWeight.BOLD if is_me else ft.FontWeight.W_400,
+                    expand=True, no_wrap=True,
+                ),
+                pred_w,
+            ]
+            if pts_w:
+                controls.append(pts_w)
+
+            return ft.Container(
+                content=ft.Row(controls, spacing=8,
+                              vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.symmetric(vertical=7, horizontal=8),
+                bgcolor=COLORS["primary"] + "11" if is_me else None,
+                border_radius=8,
+            )
+
+        async def _load_preds() -> None:
+            try:
+                preds = await firebase.get_predictions_for_match(m.id)
+            except Exception:
+                preds = []
+            by_user = {p.user_id: p for p in preds if p.user_id in grp.member_ids}
+
+            rows: list[ft.Control] = []
+            for uid in grp.member_ids:
+                is_me = self._user is not None and uid == self._user.id
+                p = by_user.get(uid)
+                hg, ag = (p.home_goals, p.away_goals) if p else (None, None)
+                # Mi pronóstico puede estar solo en el dispositivo si falló la subida
+                if hg is None and is_me and m.id in self._preds:
+                    hg, ag = self._preds[m.id]
+                rows.append(_member_row(grp.member_names.get(uid, uid[:6]), is_me, hg, ag))
+
+            body.controls = rows or [
+                ft.Text("El grupo no tiene miembros", size=12,
+                       color=COLORS["text_secondary"]),
+            ]
+            self._page.update()
+
+        asyncio.create_task(_load_preds())
+
     def _dlg_create(self, _=None) -> None:
         field = ft.TextField(
             hint_text="Nombre del grupo (ej: Amigos del trabajo)",
@@ -718,12 +925,16 @@ class ProdeScreen:
                 member_ids=[self._user.id],
                 member_names={self._user.id: self._user.display_name},
             )
-            self._group = grp
-            self._user.group_code = code
-            await self._page.client_storage.set_async(self._GROUP, code)
+            self._groups.append(grp)
+            self._active_idx = len(self._groups) - 1
+            await self._save_groups()
             try:
                 await firebase.create_group(grp)
-                await firebase.save_user(self._user)
+                await firebase.save_user(ProdeUser(
+                    id=self._user.id,
+                    display_name=self._user.display_name,
+                    group_code=code,
+                ))
             except Exception:
                 pass
             if dlg[0]:
@@ -766,22 +977,36 @@ class ProdeScreen:
                 return
             if not self._user:
                 return
+            # Check if already in this group
+            existing_idx = next((i for i, g in enumerate(self._groups) if g.code == code), None)
+            if existing_idx is not None:
+                self._active_idx = existing_idx
+                if dlg[0]:
+                    self._page.close(dlg[0])
+                self._render_banner()
+                self._render_tabla()
+                self._page.update()
+                return
             try:
                 grp = await firebase.join_group(code, self._user.id, self._user.display_name)
                 if grp is None:
                     err.value = "Código inválido. Revisá y reintentá."
                     self._page.update()
                     return
-                self._group = grp
-                self._user.group_code = code
-                await self._page.client_storage.set_async(self._GROUP, code)
-                await firebase.save_user(self._user)
+                self._groups.append(grp)
+                self._active_idx = len(self._groups) - 1
+                await self._save_groups()
+                await firebase.save_user(ProdeUser(
+                    id=self._user.id,
+                    display_name=self._user.display_name,
+                    group_code=code,
+                ))
                 if dlg[0]:
                     self._page.close(dlg[0])
                 self._render_banner()
                 self._render_tabla()
                 self._page.update()
-                await self._load_leaderboard()
+                await self._load_leaderboard_for(code)
             except Exception:
                 err.value = "No se pudo conectar. Verificá el internet."
                 self._page.update()
@@ -808,14 +1033,68 @@ class ProdeScreen:
         )
         self._page.open(dlg[0])
 
+    def _dlg_delete_or_leave(self, grp: ProdeGroup, is_owner: bool) -> None:
+        action = "eliminar" if is_owner else "salir de"
+        dlg: list = [None]
+
+        async def _confirm(_) -> None:
+            if dlg[0]:
+                self._page.close(dlg[0])
+            try:
+                if is_owner:
+                    await firebase.delete_group(grp.code)
+                else:
+                    if self._user:
+                        await firebase.leave_group(grp.code, self._user.id)
+            except Exception:
+                pass
+            await self._remove_group(grp.code)
+
+        dlg[0] = ft.AlertDialog(
+            title=ft.Text(
+                "Eliminar grupo" if is_owner else "Salir del grupo",
+                size=16, weight=ft.FontWeight.BOLD, color=COLORS["text"],
+            ),
+            content=ft.Container(
+                content=ft.Text(
+                    f"¿Querés {action} el grupo «{grp.name}»?"
+                    + ("\nSe eliminará para todos los miembros." if is_owner else ""),
+                    size=13, color=COLORS["text_secondary"],
+                ),
+                width=280,
+            ),
+            bgcolor=COLORS["surface"],
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: self._page.close(dlg[0]),
+                             style=ft.ButtonStyle(color=COLORS["text_secondary"])),
+                ft.FilledButton(
+                    "Eliminar" if is_owner else "Salir",
+                    on_click=_confirm,
+                    style=ft.ButtonStyle(bgcolor=COLORS["red"]),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self._page.open(dlg[0])
+
+    async def _remove_group(self, code: str) -> None:
+        self._groups = [g for g in self._groups if g.code != code]
+        self._leaderboards.pop(code, None)
+        self._active_idx = min(self._active_idx, max(0, len(self._groups) - 1))
+        await self._save_groups()
+        self._render_banner()
+        self._render_tabla()
+        self._page.update()
+
     def _share(self, _=None) -> None:
-        if not self._group:
+        if not self._groups or self._active_idx >= len(self._groups):
             return
+        grp = self._groups[self._active_idx]
         store = "https://play.google.com/store/apps/details?id=com.maxfixture.mundial"
         msg = (
             f"🏆 ¡Unite a mi grupo de Prode del Mundial!\n"
-            f"Grupo: {self._group.name}\n"
-            f"Código: *{self._group.code}*\n\n"
+            f"Grupo: {grp.name}\n"
+            f"Código: *{grp.code}*\n\n"
             f"Descargá MaxFixture Mundial 2026:\n{store}"
         )
         self._page.launch_url(f"https://wa.me/?text={urllib.parse.quote(msg)}")
