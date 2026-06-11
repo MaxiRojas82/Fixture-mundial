@@ -2,29 +2,75 @@ name: MaxFixture — Notificador FCM
 
 on:
   schedule:
-    # Cada 5 minutos (mínimo permitido por GitHub Actions)
+    # GitHub des-prioriza crons frecuentes en repos privados (corre cada ~4h
+    # en la práctica). El disparo real viene por workflow_dispatch desde un
+    # cron externo; este schedule queda como respaldo.
     - cron: '*/5 * * * *'
-  workflow_dispatch:  # También se puede disparar manualmente
+  workflow_dispatch:  # Disparo externo (cron-job.org / Task Scheduler) y manual
+
+# Corridas en cola en lugar de en paralelo: dos corridas simultáneas
+# leerían el mismo estado previo y duplicarían notificaciones.
+concurrency:
+  group: notifier
+  cancel-in-progress: false
 
 jobs:
   notify:
     name: Detectar eventos y enviar push
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
 
     steps:
+      # Portero barato (~5s, sin checkout ni pip): solo sigue si hay un
+      # partido en ventana. Mantiene el gasto de minutos bajo control.
+      - name: Verificar ventana de partido
+        id: gate
+        run: |
+          python3 - <<'EOF'
+          import json, os, urllib.request
+          from datetime import datetime, timezone, timedelta
+
+          URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
+          active = False
+          try:
+              with urllib.request.urlopen(URL, timeout=20) as r:
+                  data = json.load(r)
+              now = datetime.now(timezone.utc)
+              for ev in data.get("events", []):
+                  state = ((ev.get("status") or {}).get("type") or {}).get("state")
+                  try:
+                      kickoff = datetime.fromisoformat(ev["date"].replace("Z", "+00:00"))
+                  except Exception:
+                      continue
+                  if state == "in":
+                      active = True
+                  elif state == "pre" and timedelta(0) <= kickoff - now <= timedelta(minutes=15):
+                      active = True
+                  elif state == "post" and timedelta(0) <= now - kickoff <= timedelta(minutes=195):
+                      active = True
+          except Exception:
+              active = True  # ante la duda, correr el notificador completo
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"active={'true' if active else 'false'}\n")
+          print("Ventana de partido activa:", active)
+          EOF
+
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.active == 'true'
 
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.active == 'true'
         with:
           python-version: '3.12'
           cache: 'pip'
           cache-dependency-path: server/requirements.txt
 
       - name: Instalar dependencias
+        if: steps.gate.outputs.active == 'true'
         run: pip install -r server/requirements.txt
 
       - name: Ejecutar notificador
+        if: steps.gate.outputs.active == 'true'
         run: python server/notifier.py
         continue-on-error: true
         env:
