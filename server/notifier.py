@@ -41,17 +41,32 @@ def init_firebase() -> firestore.Client:
 
 # ── API football-data.org ─────────────────────────────────────────────────────
 
+_TRANSIENT_ERRORS = (
+    httpx.RemoteProtocolError,
+    httpx.ConnectError,
+    httpx.ReadError,
+    httpx.TimeoutException,
+)
+
 async def get_live_matches() -> list[dict]:
     url = "https://api.football-data.org/v4/matches"
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.get(
-            url,
-            headers={"X-Auth-Token": FOOTBALL_API_KEY},
-            params={"competitions": COMPETITION_ID, "status": "LIVE"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("matches", [])
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    url,
+                    headers={"X-Auth-Token": FOOTBALL_API_KEY},
+                    params={"competitions": COMPETITION_ID, "status": "LIVE"},
+                )
+                resp.raise_for_status()
+                return resp.json().get("matches", [])
+        except _TRANSIENT_ERRORS as exc:
+            last_exc = exc
+            wait = 10 * (attempt + 1)
+            print(f"  ⚠ Error de red (intento {attempt+1}/3): {exc!r} — reintentando en {wait}s")
+            await asyncio.sleep(wait)
+    raise last_exc  # type: ignore[misc]
 
 
 # ── Estado en Firestore ───────────────────────────────────────────────────────
@@ -157,6 +172,9 @@ async def main() -> None:
     except httpx.HTTPStatusError as e:
         print(f"ERROR API: {e.response.status_code}", file=sys.stderr)
         sys.exit(1)
+    except _TRANSIENT_ERRORS as e:
+        print(f"ERROR de red tras 3 intentos: {e!r}", file=sys.stderr)
+        sys.exit(0)  # salida limpia — error transitorio, no falla el workflow
 
     print(f"   {len(live)} partido(s) en vivo")
     if not live:

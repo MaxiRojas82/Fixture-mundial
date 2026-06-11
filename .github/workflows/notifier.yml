@@ -26,6 +26,7 @@ jobs:
 
       - name: Ejecutar notificador
         run: python server/notifier.py
+        continue-on-error: true
         env:
           FOOTBALL_API_KEY:            ${{ secrets.FOOTBALL_API_KEY }}
           FIREBASE_CREDENTIALS_JSON:   ${{ secrets.FIREBASE_CREDENTIALS_JSON }}
