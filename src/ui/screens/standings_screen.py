@@ -100,9 +100,9 @@ class StandingsScreen:
             content=ft.Row([
                 ft.Text("Equipo", size=10, color=COLORS["text_secondary"], expand=True, weight=ft.FontWeight.BOLD),
                 header_text("PJ", W["pj"]),
-                header_text("G", W["g"]),
-                header_text("E", W["e"]),
-                header_text("P", W["p"]),
+                header_text("PG", W["g"]),
+                header_text("PE", W["e"]),
+                header_text("PP", W["p"]),
                 header_text("DG", W["dg"]),
                 header_text("Pts", W["pts"], color=COLORS["primary"]),
             ], spacing=0),

@@ -123,7 +123,7 @@ class MatchScreen:
     def _build_events_card(self) -> ft.Container:
         return ft.Container(
             content=ft.Column([
-                ft.Text("GOLES", size=11, weight=ft.FontWeight.BOLD, color=COLORS["text_secondary"]),
+                ft.Text("EVENTOS", size=11, weight=ft.FontWeight.BOLD, color=COLORS["text_secondary"]),
                 self._events_col,
             ], spacing=12),
             padding=ft.padding.all(16),
@@ -214,23 +214,39 @@ class MatchScreen:
             self._status_text.color = COLORS["text_secondary"]
             self._score_text.color = COLORS["text_secondary"]
 
-        # Eventos de gol
+        # Eventos: goles y tarjetas, ordenados por minuto
+        _DETALLE = {
+            "Normal Goal": "Gol",
+            "Penalty":     "Penal",
+            "Own Goal":    "En contra",
+            "Yellow Card": "Amarilla",
+            "Red Card":    "Roja",
+        }
         self._events_col.controls.clear()
-        goals = [e for e in m.events if e.type == "Goal"]
-        if not goals:
+        events = sorted(
+            [e for e in m.events if e.type in ("Goal", "Card")],
+            key=lambda e: e.time,
+        )
+        if not events:
             self._events_col.controls.append(
-                ft.Text("Sin goles registrados", size=13, color=COLORS["text_secondary"])
+                ft.Text("Sin eventos registrados", size=13, color=COLORS["text_secondary"])
             )
-        for ev in goals:
+        for ev in events:
             raw_name = m.home.name if ev.team_id == m.home.id else m.away.name
-            is_home = ev.team_id == m.home.id
+            if ev.type == "Goal":
+                icon = "⚽"
+            elif "red" in ev.detail.lower():
+                icon = "🟥"
+            else:
+                icon = "🟨"
+            detalle = _DETALLE.get(ev.detail, ev.detail)
             self._events_col.controls.append(
                 ft.Row([
                     ft.Text(f"{ev.time}'", size=12, color=COLORS["text_secondary"], width=34),
-                    ft.Text("⚽", size=14),
+                    ft.Text(icon, size=14),
                     ft.Column([
-                        ft.Text(ev.player, size=13, color=COLORS["text"]),
-                        ft.Text(f"{team_name(raw_name)}  ·  {ev.detail}", size=11, color=COLORS["text_secondary"]),
+                        ft.Text(ev.player or "—", size=13, color=COLORS["text"]),
+                        ft.Text(f"{team_name(raw_name)}  ·  {detalle}", size=11, color=COLORS["text_secondary"]),
                     ], spacing=1, expand=True),
                 ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
             )

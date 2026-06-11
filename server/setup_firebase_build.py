@@ -220,6 +220,37 @@ def patch_desugaring() -> None:
     print("✓ App build.gradle — core library desugaring habilitado")
 
 
+def copy_notification_icon() -> None:
+    """Instala el ícono monocromo de notificaciones (silueta blanca).
+
+    Android exige siluetas blancas sobre transparente para el ícono chico
+    de notificación; usar el launcher icon genera un cuadrado/bordes blancos.
+    """
+    src = Path(__file__).parent / "ic_stat_notify.png"
+    if not src.exists():
+        print("⚠ No encontré server/ic_stat_notify.png — sin ícono de notificación")
+        return
+    dst_dir = ANDROID_DIR / "app" / "src" / "main" / "res" / "drawable"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(src, dst_dir / "ic_stat_notify.png")
+    print("✓ ic_stat_notify.png copiado a res/drawable/")
+
+    # Ícono por defecto para las notificaciones FCM (app en segundo plano)
+    manifest = ANDROID_DIR / "app" / "src" / "main" / "AndroidManifest.xml"
+    if not manifest.exists():
+        return
+    content = manifest.read_text(encoding="utf-8")
+    if "default_notification_icon" in content:
+        print("✓ AndroidManifest — meta-data de ícono ya presente, sin cambios")
+        return
+    meta = ('        <meta-data\n'
+            '            android:name="com.google.firebase.messaging.default_notification_icon"\n'
+            '            android:resource="@drawable/ic_stat_notify" />\n')
+    content = content.replace("</application>", meta + "    </application>", 1)
+    manifest.write_text(content, encoding="utf-8")
+    print("✓ AndroidManifest — ícono de notificación FCM configurado")
+
+
 def copy_fcm_handler() -> None:
     """Copia la versión canónica de fcm_handler.dart al proyecto generado.
 
@@ -277,6 +308,7 @@ if __name__ == "__main__":
     patch_application_id()
     patch_desugaring()
     copy_google_services()
+    copy_notification_icon()
     copy_fcm_handler()
     patch_firebase_messaging_init()
 

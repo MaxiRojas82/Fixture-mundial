@@ -282,6 +282,7 @@ def send_notification(title: str, body: str, match_id: str) -> None:
                 channel_id="maxfixture_goals",
                 sound="default",
                 priority="high",
+                icon="ic_stat_notify",
                 tag=f"{match_id}_{_notif_seq}_{datetime.now(timezone.utc).strftime('%H%M%S')}",
             ),
         ),

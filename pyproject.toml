@@ -20,5 +20,10 @@ permissions = ["INTERNET"]
 [tool.flet.flutter.pubspec.dependency_overrides]
 path_provider_foundation = "2.4.1"
 
+# Fondo del ícono adaptativo: el blanco por defecto generaba bordes
+# blancos alrededor del ícono en el launcher.
+[tool.flet.flutter.pubspec.flutter_launcher_icons]
+adaptive_icon_background = "#1a1a2e"
+
 # Privacy policy URL (ingresar en Play Console al publicar):
 # https://[TU_USUARIO].github.io/Fixture-mundial/privacy

@@ -22,7 +22,7 @@ class FCMHandler {
 
     FirebaseMessaging.onBackgroundMessage(_backgroundHandler);
 
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings('@drawable/ic_stat_notify');
     await _localNotifs.initialize(
       const InitializationSettings(android: androidSettings),
     );
@@ -57,7 +57,7 @@ class FCMHandler {
             channelDescription: 'Alertas de goles y eventos del Mundial',
             importance: Importance.high,
             priority: Priority.high,
-            icon: '@mipmap/ic_launcher',
+            icon: '@drawable/ic_stat_notify',
           ),
         ),
       );
