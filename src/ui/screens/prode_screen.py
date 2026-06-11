@@ -566,7 +566,8 @@ class ProdeScreen:
         can_view = known and not can_edit and bool(self._groups)
 
         if m.is_live:
-            chip, chip_c = f"🔴 {m.elapsed}'", COLORS["live"]
+            mins = m.display_minute
+            chip, chip_c = (f"🔴 ~{mins}'" if mins else "🔴 EN VIVO"), COLORS["live"]
         elif m.status == MatchStatus.FINISHED:
             chip, chip_c = f"FT  {m.score.home}–{m.score.away}", COLORS["text_secondary"]
         elif m.status == MatchStatus.HALFTIME:

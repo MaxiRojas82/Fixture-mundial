@@ -2,7 +2,7 @@ import flet as ft
 from src.models.match import Match, MatchStatus
 from src.ui.theme import COLORS
 from src.ui.flags import get_flag_url, get_flag_b64
-from src.ui.translations import team_name, round_name, is_knockout
+from src.ui.translations import team_name
 
 
 def _flag_img(team_name: str, size: int = 28) -> ft.Control:
@@ -18,114 +18,124 @@ def _flag_img(team_name: str, size: int = 28) -> ft.Control:
     return ft.Container(width=size, height=h)
 
 
-def build_match_card(match: Match, on_tap=None, show_date: bool = False) -> ft.Container:
+def _dot_label(text: str, color: str) -> ft.Row:
+    return ft.Row([
+        ft.Container(width=7, height=7, bgcolor=color, border_radius=4),
+        ft.Text(text, size=11.5, color=color, weight=ft.FontWeight.BOLD),
+    ], spacing=6, tight=True, alignment=ft.MainAxisAlignment.CENTER,
+       vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+
+def build_match_card(match: Match, on_tap=None, show_date: bool = False,
+                     featured: bool = False) -> ft.Container:
     is_live = match.is_live
+    local_dt = match.date.astimezone()
+    has_score = match.score.home is not None and match.score.away is not None
 
-    if is_live:
-        status_label = f"🔴  {match.elapsed}'"
-        status_color = COLORS["live"]
-        card_border = ft.border.all(1.5, COLORS["live"] + "77")
-        score_color = COLORS["live"]
-    elif match.status == MatchStatus.FINISHED:
-        status_label = "FT"
-        status_color = COLORS["text_secondary"]
-        card_border = ft.border.all(1, COLORS["card_border"])
-        score_color = COLORS["text"]
-    elif match.status == MatchStatus.HALFTIME:
-        status_label = "HT"
-        status_color = COLORS["yellow"]
+    # ── Estado superior (centrado) + texto central ────────────────────────
+    if match.status == MatchStatus.HALFTIME:
+        status_widget: ft.Control = _dot_label("ENTRETIEMPO", COLORS["yellow"])
+        center_text, center_color = match.score_display, COLORS["yellow"]
         card_border = ft.border.all(1, COLORS["yellow"] + "55")
-        score_color = COLORS["yellow"]
-    else:
-        local_dt = match.date.astimezone()
-        if show_date:
-            _MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
-            status_label = f"{local_dt.day} {_MONTHS[local_dt.month - 1]} · {local_dt.strftime('%H:%M')}"
+    elif is_live:
+        mins = match.display_minute
+        lbl = "EN VIVO" + (f"  ·  ~{mins}'" if mins else "")
+        status_widget = _dot_label(lbl, COLORS["live"])
+        if has_score:
+            center_text, center_color = match.score_display, COLORS["live"]
         else:
-            status_label = local_dt.strftime("%H:%M")
-        status_color = COLORS["text_secondary"]
+            center_text, center_color = "En juego", COLORS["text_secondary"]
+        card_border = ft.border.all(1.5, COLORS["live"] + "77")
+    elif match.status == MatchStatus.FINISHED:
+        status_widget = ft.Text("FINALIZADO", size=11, weight=ft.FontWeight.BOLD,
+                               color=COLORS["text_secondary"],
+                               text_align=ft.TextAlign.CENTER)
+        center_text, center_color = match.score_display, COLORS["text"]
         card_border = ft.border.all(1, COLORS["card_border"])
-        score_color = COLORS["text_secondary"]
+    else:
+        status_widget = ft.Text(
+            f"{local_dt.strftime('%d/%m')}  {local_dt.strftime('%H:%M')}",
+            size=11.5, weight=ft.FontWeight.W_600,
+            color=COLORS["text_secondary"], text_align=ft.TextAlign.CENTER,
+        )
+        center_text, center_color = "vs", COLORS["text_secondary"]
+        card_border = ft.border.all(1, COLORS["card_border"])
 
-    card_shadow = ft.BoxShadow(
-        blur_radius=12,
-        spread_radius=0,
-        color=COLORS["shadow"],
-        offset=ft.Offset(0, 3),
-    )
+    if featured:
+        card_border = ft.border.all(1.5, COLORS["yellow"] + "AA")
 
-    body_rows: list[ft.Control] = [
-        ft.Row([
-            ft.Text(round_name(match.group) if is_knockout(match.group) else match.group,
-                    size=11, color=COLORS["text_secondary"]),
+    body_rows: list[ft.Control] = []
+
+    if featured:
+        body_rows.append(ft.Row([
             ft.Container(
-                content=ft.Text(
-                    status_label,
-                    size=11,
-                    color=status_color,
-                    weight=ft.FontWeight.BOLD,
-                ),
-                padding=ft.padding.symmetric(horizontal=8, vertical=2),
-                border_radius=10,
-                bgcolor=status_color + "22" if is_live else "transparent",
+                content=ft.Row([
+                    ft.Text("⭐", size=11),
+                    ft.Text("Partido del día", size=11, color=COLORS["yellow"],
+                           weight=ft.FontWeight.BOLD),
+                ], spacing=5, tight=True),
+                bgcolor=COLORS["yellow"] + "1A",
+                border=ft.border.all(1, COLORS["yellow"] + "55"),
+                border_radius=12,
+                padding=ft.padding.symmetric(horizontal=12, vertical=3),
             ),
-        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        ], alignment=ft.MainAxisAlignment.CENTER))
+
+    body_rows.append(ft.Row([status_widget], alignment=ft.MainAxisAlignment.CENTER))
+
+    body_rows.append(ft.Row([
+        # Equipo local: nombre + bandera
         ft.Row([
-            # Equipo local
-            ft.Row([
-                _flag_img(match.home.name),
-                ft.Text(
-                    team_name(match.home.name),
-                    size=13,
-                    weight=ft.FontWeight.W_500,
-                    color=COLORS["text"],
-                    no_wrap=False,
-                    expand=True,
-                ),
-            ], spacing=8, expand=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            # Marcador
-            ft.Container(
-                content=ft.Text(
-                    "vs" if match.score.home is None and match.score.away is None else match.score_display,
-                    size=17,
-                    weight=ft.FontWeight.BOLD,
-                    color=score_color,
-                ),
-                padding=ft.padding.symmetric(horizontal=8),
+            ft.Text(
+                team_name(match.home.name),
+                size=13.5, weight=ft.FontWeight.W_600, color=COLORS["text"],
+                text_align=ft.TextAlign.RIGHT, no_wrap=False, expand=True,
             ),
-            # Equipo visitante
-            ft.Row([
-                ft.Text(
-                    team_name(match.away.name),
-                    size=13,
-                    weight=ft.FontWeight.W_500,
-                    color=COLORS["text"],
-                    text_align=ft.TextAlign.RIGHT,
-                    no_wrap=False,
-                    expand=True,
-                ),
-                _flag_img(match.away.name),
-            ], spacing=8, expand=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-               alignment=ft.MainAxisAlignment.END),
-        ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-    ]
+            _flag_img(match.home.name, 26),
+        ], spacing=8, expand=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+           alignment=ft.MainAxisAlignment.END),
+        # Centro: marcador / «En juego» / «vs»
+        ft.Container(
+            content=ft.Text(
+                center_text,
+                size=16 if has_score else 12,
+                weight=ft.FontWeight.BOLD if has_score else ft.FontWeight.W_500,
+                color=center_color,
+                italic=center_text == "En juego",
+            ),
+            padding=ft.padding.symmetric(horizontal=10),
+        ),
+        # Equipo visitante: bandera + nombre
+        ft.Row([
+            _flag_img(match.away.name, 26),
+            ft.Text(
+                team_name(match.away.name),
+                size=13.5, weight=ft.FontWeight.W_600, color=COLORS["text"],
+                no_wrap=False, expand=True,
+            ),
+        ], spacing=8, expand=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+    ], vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
     if match.venue:
-        body_rows.append(
-            ft.Row([
-                ft.Icon(ft.Icons.LOCATION_ON_OUTLINED, size=12, color=COLORS["text_secondary"]),
-                ft.Text(match.venue, size=11, color=COLORS["text_secondary"], expand=True, no_wrap=True),
-            ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-        )
+        body_rows.append(ft.Text(
+            match.venue, size=11, color=COLORS["text_secondary"],
+            text_align=ft.TextAlign.CENTER, no_wrap=True,
+        ))
 
     return ft.Container(
-        content=ft.Column(body_rows, spacing=8),
-        padding=ft.padding.all(16),
+        content=ft.Column(body_rows, spacing=9,
+                         horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+        padding=ft.padding.all(14),
         margin=ft.margin.symmetric(horizontal=16, vertical=5),
         bgcolor=COLORS["card"],
         border_radius=14,
         border=card_border,
-        shadow=card_shadow,
+        shadow=ft.BoxShadow(
+            blur_radius=12,
+            spread_radius=0,
+            color=COLORS["shadow"],
+            offset=ft.Offset(0, 3),
+        ),
         on_click=on_tap,
         ink=True,
     )

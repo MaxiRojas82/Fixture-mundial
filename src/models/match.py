@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 
@@ -69,6 +69,22 @@ class Match:
     @property
     def is_live(self) -> bool:
         return self.status in LIVE_STATUSES
+
+    @property
+    def display_minute(self) -> int | None:
+        """Minuto del API si viene; sino estimado desde el inicio (el plan
+        gratuito de football-data.org no envía `minute`)."""
+        if self.elapsed:
+            return self.elapsed
+        if not self.is_live:
+            return None
+        try:
+            mins = int((datetime.now(timezone.utc) - self.date).total_seconds() // 60)
+        except TypeError:
+            return None
+        if mins > 60:  # descontar el entretiempo aproximado
+            mins -= 15
+        return max(1, min(mins, 120))
 
     @property
     def score_display(self) -> str:

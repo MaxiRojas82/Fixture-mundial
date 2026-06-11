@@ -3,12 +3,13 @@ from datetime import datetime, timezone, timedelta
 from datetime import date as DateType
 import flet as ft
 from src.services.live_service import LiveService
-from src.models.match import Match
+from src.models.match import Match, MatchStatus
 from src.ui.notifications import is_enabled, notifications_enabled, toggle_notifications
 from src.ui.theme import COLORS
 from src.ui.components.app_drawer import build_hamburger, build_refresh_btn
 from src.services import push_notification_service as push_notif
 from src.ui.components.match_card import build_match_card
+from src.ui.components.match_modal import open_match_modal
 from src.ui.components.goal_alert import GoalAlert
 from src.ui.components.nav_bar import build_nav_bar
 
@@ -227,27 +228,44 @@ class HomeScreen:
             self._body.controls.append(self._build_countdown_card())
             showed_countdown = True
 
-        # Partidos filtrados por día
+        # Partidos filtrados por día — en vivo primero, luego por horario
         all_matches = self._service.matches
         day_matches = [m for m in all_matches if m.date.astimezone().date() == _selected_date]
-        live     = [m for m in day_matches if m.is_live]
-        non_live = [m for m in day_matches if not m.is_live]
+        live    = sorted([m for m in day_matches if m.is_live], key=lambda m: m.date)
+        others  = sorted([m for m in day_matches if not m.is_live], key=lambda m: m.date)
+        ordered = live + others
 
-        if live:
-            self._body.controls.append(_section_label("EN VIVO", color=COLORS["live"]))
-            for m in live:
+        if ordered:
+            n = len(ordered)
+            suffix = " hoy" if _selected_date == today else ""
+            self._body.controls.append(ft.Container(
+                content=ft.Text(
+                    f"{n} partido{'s' if n != 1 else ''}{suffix}",
+                    size=14, weight=ft.FontWeight.BOLD, color=COLORS["text"],
+                ),
+                padding=ft.padding.only(left=18, top=14, right=20, bottom=4),
+            ))
+
+            # Partido del día: el que está en vivo, sino el próximo de hoy
+            featured_id = None
+            if _selected_date == today:
+                if live:
+                    featured_id = live[0].id
+                else:
+                    nxt = next((m for m in others if m.status == MatchStatus.SCHEDULED), None)
+                    if nxt:
+                        featured_id = nxt.id
+
+            for m in ordered:
                 self._body.controls.append(
-                    build_match_card(m, on_tap=lambda _, mid=m.id: self._page.go(f"/match/{mid}"))
+                    build_match_card(
+                        m,
+                        featured=(m.id == featured_id),
+                        on_tap=lambda _, match=m: open_match_modal(self._page, match),
+                    )
                 )
 
-        if non_live:
-            self._body.controls.append(_section_label("PARTIDOS DEL DÍA"))
-            for m in non_live:
-                self._body.controls.append(
-                    build_match_card(m, on_tap=lambda _, mid=m.id: self._page.go(f"/match/{mid}"))
-                )
-
-        if not live and not non_live and not showed_countdown:
+        if not ordered and not showed_countdown:
             err = self._service.load_error
             if err and not self._service.matches:
                 msg = ft.Column([

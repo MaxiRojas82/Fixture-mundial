@@ -24,7 +24,7 @@ async def analyze_match(match: Match) -> str:
             goals_text += f"- Min {ev.time}': {ev.player} ({team}) — {ev.detail}\n"
 
     estado = "En curso" if match.is_live else match.status.name
-    minuto = f"Minuto {match.elapsed}'" if match.elapsed else ""
+    minuto = f"Minuto ~{match.display_minute}'" if match.display_minute else ""
 
     prompt = f"""Eres un comentarista deportivo apasionado del fútbol. Analiza este partido del Mundial 2026 en español:
 

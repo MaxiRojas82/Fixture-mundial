@@ -3,6 +3,7 @@ from src.services.live_service import LiveService
 from src.models.match import Match
 from src.ui.theme import COLORS
 from src.ui.components.match_card import build_match_card
+from src.ui.components.match_modal import open_match_modal
 from src.ui.components.nav_bar import build_nav_bar
 from src.ui.components.app_drawer import build_hamburger, build_refresh_btn
 from src.ui.translations import round_name, round_order, is_knockout
@@ -69,7 +70,7 @@ class FixturesScreen:
                 self._body.controls.append(_date_subheader(date_label))
                 for m in day_matches:
                     self._body.controls.append(
-                        build_match_card(m, on_tap=lambda _, mid=m.id: self._page.go(f"/match/{mid}"))
+                        build_match_card(m, on_tap=lambda _, match=m: open_match_modal(self._page, match))
                     )
 
         # ── Fases eliminatorias: agrupadas por ronda ───────────────────────
@@ -83,7 +84,7 @@ class FixturesScreen:
                 self._body.controls.append(_round_header(rnd))
                 for idx, m in enumerate(sorted(by_round[rnd], key=lambda x: x.date), start=1):
                     self._body.controls.append(
-                        build_match_card(m, on_tap=lambda _, mid=m.id: self._page.go(f"/match/{mid}"))
+                        build_match_card(m, on_tap=lambda _, match=m: open_match_modal(self._page, match))
                     )
 
         if not matches:

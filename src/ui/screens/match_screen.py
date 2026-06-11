@@ -197,7 +197,8 @@ class MatchScreen:
         self._venue_text.value = m.venue
 
         if m.is_live:
-            self._status_text.value = f"🔴  EN VIVO  ·  {m.elapsed}'"
+            mins = m.display_minute
+            self._status_text.value = f"🔴  EN VIVO  ·  ~{mins}'" if mins else "🔴  EN VIVO"
             self._status_text.color = COLORS["live"]
             self._score_text.color = COLORS["live"]
         elif m.status == MatchStatus.HALFTIME:
