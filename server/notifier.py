@@ -265,7 +265,14 @@ def detect_events(prev: dict, curr: dict) -> list[tuple[str, str]]:
 
 # ── FCM ───────────────────────────────────────────────────────────────────────
 
+_notif_seq = 0
+
+
 def send_notification(title: str, body: str, match_id: str) -> None:
+    # Tag único por evento: con un tag compartido por partido, Android
+    # reemplaza la notificación anterior (el gol pisaba al final, etc.)
+    global _notif_seq
+    _notif_seq += 1
     msg = messaging.Message(
         notification=messaging.Notification(title=title, body=body),
         data={"matchId": match_id},
@@ -275,7 +282,7 @@ def send_notification(title: str, body: str, match_id: str) -> None:
                 channel_id="maxfixture_goals",
                 sound="default",
                 priority="high",
-                tag=match_id,
+                tag=f"{match_id}_{_notif_seq}_{datetime.now(timezone.utc).strftime('%H%M%S')}",
             ),
         ),
         topic=FCM_TOPIC,
