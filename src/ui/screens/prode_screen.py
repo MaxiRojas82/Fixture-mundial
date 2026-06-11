@@ -1090,7 +1090,7 @@ class ProdeScreen:
         if not self._groups or self._active_idx >= len(self._groups):
             return
         grp = self._groups[self._active_idx]
-        store = "https://play.google.com/store/apps/details?id=com.maxfixture.mundial"
+        store = "https://play.google.com/store/apps/details?id=com.mrojas.maxfixture"
         msg = (
             f"🏆 ¡Unite a mi grupo de Prode del Mundial!\n"
             f"Grupo: {grp.name}\n"
