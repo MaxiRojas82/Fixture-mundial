@@ -61,6 +61,11 @@ def toggle_notifications() -> bool:
     return _notifications_on
 
 
+def set_notifications_on(value: bool) -> None:
+    global _notifications_on
+    _notifications_on = value
+
+
 def is_enabled(event_type: str) -> bool:
     return _notifications_on and _settings.get(event_type, True)
 

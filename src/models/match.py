@@ -51,6 +51,7 @@ class MatchEvent:
     player: str
     type: str    # "Goal", "Card", "subst"
     detail: str  # "Normal Goal", "Penalty", "Yellow Card", etc.
+    assist: str = ""
 
 
 @dataclass

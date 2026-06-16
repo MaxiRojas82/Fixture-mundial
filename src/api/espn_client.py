@@ -37,8 +37,9 @@ def _parse_details(comp: dict, home_team_id: str) -> list[dict]:
             detail = ("Penalty" if "penalty" in low
                       else "Own Goal" if "own" in low
                       else "Normal Goal")
+            assist = (athletes[1] or {}).get("displayName") or "" if len(athletes) > 1 else ""
             events.append({"minute": minute, "side": side, "player": player,
-                          "type": "Goal", "detail": detail})
+                          "assist": assist, "type": "Goal", "detail": detail})
         elif d.get("redCard"):
             events.append({"minute": minute, "side": side, "player": player,
                           "type": "Card", "detail": "Red Card"})
@@ -48,14 +49,24 @@ def _parse_details(comp: dict, home_team_id: str) -> list[dict]:
     return events
 
 
-async def get_live() -> list[dict]:
-    """Partidos en juego o recién terminados, según ESPN.
+def _score(comp_team: dict) -> int | None:
+    raw = comp_team.get("score")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
-    Retorna [{kickoff, home, away, status (short del modelo), minute,
-    home_goals, away_goals}].
+
+async def _fetch_and_parse(
+    params: dict | None = None,
+    states: set[str] | None = None,
+) -> list[dict]:
+    """Descarga el scoreboard de ESPN y parsea todos los partidos.
+
+    states — si se pasa, filtra por state (e.g. {"in", "post"}); None = todos.
     """
     async with httpx.AsyncClient(timeout=10) as c:
-        r = await c.get(_URL)
+        r = await c.get(_URL, params=params or {})
         r.raise_for_status()
         data = r.json()
 
@@ -64,7 +75,7 @@ async def get_live() -> list[dict]:
         comp = (ev.get("competitions") or [{}])[0]
         stype = (ev.get("status") or {}).get("type") or {}
         state = stype.get("state")
-        if state not in ("in", "post"):
+        if states is not None and state not in states:
             continue
 
         try:
@@ -96,13 +107,6 @@ async def get_live() -> list[dict]:
         else:
             short = "2H"
 
-        def _score(comp_team: dict) -> int | None:
-            raw = comp_team.get("score")
-            try:
-                return int(raw)
-            except (TypeError, ValueError):
-                return None
-
         home_team_id = str((home_c.get("team") or {}).get("id") or "")
         out.append({
             "kickoff":    kickoff,
@@ -115,3 +119,17 @@ async def get_live() -> list[dict]:
             "events":     _parse_details(comp, home_team_id),
         })
     return out
+
+
+async def get_live() -> list[dict]:
+    """Partidos en juego o recién terminados, según ESPN."""
+    return await _fetch_and_parse(states={"in", "post"})
+
+
+async def get_by_date(date_str: str) -> list[dict]:
+    """Partidos de una fecha específica (YYYYMMDD). Solo finalizados (post).
+
+    Útil para recuperar eventos históricos de partidos ya terminados que
+    ya no aparecen en el scoreboard en vivo.
+    """
+    return await _fetch_and_parse(params={"dates": date_str}, states={"post"})

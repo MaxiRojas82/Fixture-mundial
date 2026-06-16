@@ -39,6 +39,7 @@ async def main(page: ft.Page) -> None:
         from src.ui.screens.bracket_screen import BracketScreen
         from src.ui.screens.prode_screen import ProdeScreen
         from src.ui.screens.match_screen import MatchScreen
+        from src.ui.screens.stats_screen import StatsScreen
         from src.ui.theme import app_theme, COLORS, set_dark_mode
         from src.ui.components.app_drawer import build_current_drawer
         from src.services.live_service import LiveService
@@ -52,6 +53,22 @@ async def main(page: ft.Page) -> None:
         if saved_dark is False:
             set_dark_mode(False)
             page.theme_mode = ft.ThemeMode.LIGHT
+
+        # Restaurar preferencias de notificaciones
+        import json as _json
+        from src.ui.notifications import set_notifications_on, set_event_settings
+        try:
+            saved_notif_on = await page.client_storage.get_async("notif_on")
+            if saved_notif_on is not None:
+                set_notifications_on(bool(saved_notif_on))
+        except Exception:
+            pass
+        try:
+            saved_events = await page.client_storage.get_async("notif_events")
+            if saved_events:
+                set_event_settings(_json.loads(saved_events))
+        except Exception:
+            pass
 
         page.theme = app_theme()
         page.bgcolor = COLORS["bg"]
@@ -83,6 +100,8 @@ async def main(page: ft.Page) -> None:
                         v = BracketScreen(page, live_service).build()
                     elif route == "/prode":
                         v = ProdeScreen(page, live_service).build()
+                    elif route == "/stats":
+                        v = StatsScreen(page, live_service).build()
                     else:
                         page.go("/")
                         return
@@ -112,6 +131,8 @@ async def main(page: ft.Page) -> None:
         async def view_pop(e: ft.ViewPopEvent) -> None:
             if len(page.views) > 1:
                 page.views.pop()
+                if page.views:
+                    page.route = page.views[-1].route
                 page.update()
             else:
                 page.go("/")

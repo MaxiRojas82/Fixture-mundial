@@ -317,6 +317,7 @@ class FootballClient:
                 player=(goal.get("scorer") or {}).get("name") or "",
                 type="Goal",
                 detail=(goal.get("type") or "Normal Goal").replace("_", " ").title(),
+                assist=(goal.get("assist") or {}).get("name") or "",
             ))
         for booking in data.get("bookings", []):
             events.append(MatchEvent(

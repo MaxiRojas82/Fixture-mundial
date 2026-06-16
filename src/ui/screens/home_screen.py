@@ -201,11 +201,15 @@ class HomeScreen:
 
     # ── Render y datos ─────────────────────────────────────────────────────
 
-    def _toggle_notif(self, _) -> None:
+    async def _toggle_notif(self, _) -> None:
         enabled = toggle_notifications()
         self._notif_btn.icon = ft.Icons.NOTIFICATIONS_ROUNDED if enabled else ft.Icons.NOTIFICATIONS_OFF_ROUNDED
         self._notif_btn.icon_color = COLORS["primary"] if enabled else COLORS["text_secondary"]
         self._notif_btn.tooltip = "Notificaciones activadas" if enabled else "Notificaciones desactivadas"
+        try:
+            await self._page.client_storage.set_async("notif_on", enabled)
+        except Exception:
+            pass
         self._page.open(ft.SnackBar(
             content=ft.Text(
                 "🔔 Notificaciones activadas"

@@ -4,7 +4,7 @@ from src.ui.theme import COLORS
 
 def build_nav_bar(page: ft.Page, selected_index: int = 0) -> ft.NavigationBar:
     def on_change(e: ft.ControlEvent) -> None:
-        routes = ["/", "/fixtures", "/standings", "/bracket", "/prode"]
+        routes = ["/", "/fixtures", "/standings", "/bracket", "/prode", "/stats"]
         page.go(routes[e.control.selected_index])
 
     return ft.NavigationBar(
@@ -33,6 +33,11 @@ def build_nav_bar(page: ft.Page, selected_index: int = 0) -> ft.NavigationBar:
                 icon=ft.Icons.STAR_BORDER_ROUNDED,
                 selected_icon=ft.Icons.STAR_ROUNDED,
                 label="Prode",
+            ),
+            ft.NavigationBarDestination(
+                icon=ft.Icons.LEADERBOARD_OUTLINED,
+                selected_icon=ft.Icons.LEADERBOARD,
+                label="Stats",
             ),
         ],
         selected_index=selected_index,

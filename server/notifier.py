@@ -87,15 +87,26 @@ async def get_fd_schedule() -> list[dict]:
     return data.get("matches", [])
 
 
+_LIVE_FD_STATUSES = {"IN_PLAY", "PAUSED", "HALFTIME", "EXTRA_TIME", "PENALTY"}
+
+
 def in_match_window(fd_matches: list[dict]) -> bool:
-    """¿Hay algún partido cuya ventana (−10 min, +3h45) incluya este momento?"""
+    """¿Hay algún partido en vivo o dentro de la ventana (−30 min, +210 min)?
+
+    Mientras el partido está en curso (IN_PLAY, EXTRA_TIME, PENALTY…) se activa
+    siempre, sin importar la hora. La cota +210 min cubre el peor caso de un
+    partido con penales (≈180 min desde el kickoff) más los 30 min de gracia
+    posteriores al final.
+    """
     now = datetime.now(timezone.utc)
     for m in fd_matches:
+        if m.get("status") in _LIVE_FD_STATUSES:
+            return True
         try:
             kickoff = datetime.fromisoformat(m["utcDate"].replace("Z", "+00:00"))
         except (KeyError, ValueError):
             continue
-        if kickoff - timedelta(minutes=10) <= now <= kickoff + timedelta(hours=3, minutes=45):
+        if kickoff - timedelta(minutes=30) <= now <= kickoff + timedelta(minutes=210):
             return True
     return False
 

@@ -88,6 +88,77 @@ class LiveService:
             self._matches[match.id] = match
         return match
 
+    def get_figura_standings(self) -> list[dict]:
+        """Ranking por número de veces que un jugador fue figura de un partido."""
+        from collections import Counter
+        counts: Counter = Counter()
+        player_team: dict[str, str] = {}
+
+        for m in self._matches.values():
+            if m.status != MatchStatus.FINISHED and not m.is_live:
+                continue
+            real_scorers = [
+                ev.player for ev in m.events
+                if ev.type == "Goal" and ev.player and "own" not in ev.detail.lower()
+            ]
+            if not real_scorers:
+                continue
+            figura = Counter(real_scorers).most_common(1)[0][0]
+            counts[figura] += 1
+            if figura not in player_team:
+                for ev in m.events:
+                    if ev.player == figura:
+                        player_team[figura] = (
+                            m.home.name if ev.team_id == m.home.id else m.away.name
+                        )
+                        break
+
+        return [
+            {"player": p, "team": player_team.get(p, ""), "figuras": c}
+            for p, c in counts.most_common()
+        ]
+
+    def get_top_scorers(self) -> list[dict]:
+        """Goleadores del torneo agrupados por jugador (excluye autogoles)."""
+        scorers: dict[str, dict] = {}
+        for m in self._matches.values():
+            for ev in m.events:
+                if ev.type != "Goal" or not ev.player:
+                    continue
+                if "own" in ev.detail.lower():
+                    continue
+                if ev.player not in scorers:
+                    tname = m.home.name if ev.team_id == m.home.id else m.away.name
+                    scorers[ev.player] = {
+                        "player": ev.player,
+                        "team": tname,
+                        "goals": 0,
+                        "penalties": 0,
+                    }
+                scorers[ev.player]["goals"] += 1
+                if "penalty" in ev.detail.lower():
+                    scorers[ev.player]["penalties"] += 1
+        return sorted(scorers.values(), key=lambda x: -x["goals"])
+
+    def get_top_assists(self) -> list[dict]:
+        """Asistencias del torneo agrupadas por jugador (excluye autogoles)."""
+        assists: dict[str, dict] = {}
+        for m in self._matches.values():
+            for ev in m.events:
+                if ev.type != "Goal" or not ev.assist:
+                    continue
+                if "own" in ev.detail.lower():
+                    continue
+                if ev.assist not in assists:
+                    tname = m.home.name if ev.team_id == m.home.id else m.away.name
+                    assists[ev.assist] = {
+                        "player": ev.assist,
+                        "team": tname,
+                        "assists": 0,
+                    }
+                assists[ev.assist]["assists"] += 1
+        return sorted(assists.values(), key=lambda x: -x["assists"])
+
     # ── Ciclo de vida ──────────────────────────────────────────────────────
 
     async def start(self) -> None:
@@ -105,6 +176,48 @@ class LiveService:
         await self._fetch_all(force=True)
 
     # ── Lógica interna ─────────────────────────────────────────────────────
+
+    async def _backfill_events(self) -> None:
+        """Busca en ESPN, por fecha, los eventos de partidos terminados sin eventos."""
+        needs = [
+            m for m in self._matches.values()
+            if m.status == MatchStatus.FINISHED and not m.events
+        ]
+        if not needs:
+            return
+
+        by_date: dict[str, list] = {}
+        for m in needs:
+            key = m.date.strftime("%Y%m%d")
+            by_date.setdefault(key, []).append(m)
+
+        for date_key in by_date:
+            try:
+                items = await espn_client.get_by_date(date_key)
+                for it in items:
+                    local = self._find_local_by_schedule(it["kickoff"], it["home"], it["away"])
+                    if not local:
+                        continue
+                    stored = self._matches.get(local.id)
+                    if not stored or stored.events:
+                        continue
+                    raw = it.get("events") or []
+                    new_events = [
+                        MatchEvent(
+                            time=e["minute"],
+                            team_id=local.home.id if e["side"] == "home" else local.away.id,
+                            player=e["player"],
+                            type=e["type"],
+                            detail=e["detail"],
+                            assist=e.get("assist", ""),
+                        )
+                        for e in raw
+                    ]
+                    self._matches[local.id] = replace(stored, events=new_events)
+                    # Guarda aunque sea [] para no volver a consultar en la próxima sesión
+                    self._save_events_cache(local.id, new_events)
+            except Exception:
+                pass
 
     async def _poll_loop(self) -> None:
         while self._running:
@@ -170,6 +283,33 @@ class LiveService:
         except Exception:
             pass
 
+    @staticmethod
+    def _save_events_cache(match_id: int, events: list) -> None:
+        try:
+            CACHE_DIR.mkdir(exist_ok=True)
+            path = CACHE_DIR / f"events_{match_id}.json"
+            data = [{"time": e.time, "team_id": e.team_id, "player": e.player,
+                     "type": e.type, "detail": e.detail, "assist": e.assist} for e in events]
+            path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    @staticmethod
+    def _load_events_cache(match_id: int) -> list | None:
+        """None = archivo no existe; [] = partido sin goles (ya consultado)."""
+        try:
+            path = CACHE_DIR / f"events_{match_id}.json"
+            if not path.exists():
+                return None
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return [MatchEvent(
+                time=e["time"], team_id=e["team_id"], player=e["player"],
+                type=e["type"], detail=e["detail"],
+                assist=e.get("assist", ""),
+            ) for e in data]
+        except Exception:
+            return None
+
     async def _fetch_all(self, force: bool = False) -> None:
         try:
             from src.ui.flags import prefetch_flags
@@ -189,6 +329,15 @@ class LiveService:
             for m in matches:
                 self._matches[m.id] = m
             self._standings = self._client.parse_standings(standings_raw)
+
+            # Cargar eventos cacheados para todos los partidos con marcador
+            for mid, m in list(self._matches.items()):
+                if not m.events:
+                    cached = self._load_events_cache(mid)
+                    if cached is not None:  # None = sin archivo; [] = 0-0 ya consultado
+                        self._matches[mid] = replace(m, events=cached)
+
+            await self._backfill_events()
 
             team_names = list({
                 m.home.name for m in matches if m.home.id != 0
@@ -248,6 +397,7 @@ class LiveService:
                         player=e["player"],
                         type=e["type"],
                         detail=e["detail"],
+                        assist=e.get("assist", ""),
                     )
                     for e in events_by_id[mid]
                 ]
@@ -263,6 +413,8 @@ class LiveService:
                 events=new_events if new_events is not None else local.events,
             )
             self._matches[mid] = current
+            if new_events:
+                LiveService._save_events_cache(mid, new_events)
 
             # Primera observación del partido en esta sesión → línea de base
             if mid not in self._baselined:
@@ -339,6 +491,8 @@ class LiveService:
             if prev and self._status_order(m.status) < self._status_order(prev.status):
                 continue
             self._matches[m.id] = m
+            if m.events:
+                self._save_events_cache(m.id, m.events)
             first_time = m.id not in self._baselined
             self._baselined.add(m.id)
             if prev and not first_time:

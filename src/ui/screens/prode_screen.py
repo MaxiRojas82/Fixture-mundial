@@ -104,7 +104,7 @@ class ProdeScreen:
             animation_duration=200,
             tabs=[
                 ft.Tab(text="Pronósticos", content=self._preds_col),
-                ft.Tab(text="Tabla",        content=self._tabla_col),
+                ft.Tab(text="Tabla de posiciones",        content=self._tabla_col),
             ],
             label_color=COLORS["primary"],
             unselected_label_color=COLORS["text_secondary"],
@@ -148,6 +148,13 @@ class ProdeScreen:
                     padding=ft.padding.all(6),
                 ),
                 ft.Column([self._header_name, self._header_sub], spacing=2, expand=True),
+                ft.IconButton(
+                    icon=ft.Icons.EDIT_OUTLINED,
+                    icon_color=COLORS["text_secondary"],
+                    icon_size=18,
+                    tooltip="Cambiar nombre",
+                    on_click=lambda _: self._dlg_rename(),
+                ),
                 build_refresh_btn(self._page, self._service),
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.padding.only(left=8, top=52, right=8, bottom=14),
@@ -175,6 +182,20 @@ class ProdeScreen:
             self._preds = {}
 
         self._user = ProdeUser(id=uid, display_name=name)
+
+        # Sync from Firebase: pull predictions that exist remotely but not locally
+        # (handles manual inserts, device migrations, sync failures)
+        try:
+            remote = await firebase.get_predictions_for_users([uid])
+            added = False
+            for pred in remote:
+                if pred.match_id not in self._preds:
+                    self._preds[pred.match_id] = (pred.home_goals, pred.away_goals)
+                    added = True
+            if added:
+                await self._persist_preds()
+        except Exception:
+            pass
 
         # Load group codes list (with migration from legacy single-code key)
         codes: list[str] = []
@@ -727,6 +748,79 @@ class ProdeScreen:
                                style=ft.ButtonStyle(bgcolor=COLORS["primary"])),
             ],
             actions_alignment=ft.MainAxisAlignment.CENTER,
+        )
+        self._page.open(dlg[0])
+
+    def _dlg_rename(self) -> None:
+        if not self._user:
+            return
+        field = ft.TextField(
+            value=self._user.display_name,
+            hint_text="Tu nombre en el prode",
+            bgcolor=COLORS["bg"],
+            color=COLORS["text"],
+            border_color=COLORS["primary"],
+            focused_border_color=COLORS["primary"],
+            text_size=15,
+            max_length=20,
+        )
+        dlg: list = [None]
+
+        async def _ok(_) -> None:
+            n = (field.value or "").strip()
+            if not n:
+                field.error_text = "Ingresá un nombre"
+                self._page.update()
+                return
+            if n == self._user.display_name:
+                if dlg[0]:
+                    self._page.close(dlg[0])
+                return
+            self._user.display_name = n
+            await self._page.client_storage.set_async(self._NAME, n)
+            # Actualizar datos locales para reflejo inmediato en la UI
+            for grp in self._groups:
+                grp.member_names[self._user.id] = n
+            for entries in self._leaderboards.values():
+                for entry in entries:
+                    if entry.user_id == self._user.id:
+                        entry.display_name = n
+            if dlg[0]:
+                self._page.close(dlg[0])
+            self._render_header()
+            self._render_tabla()
+            self._page.update()
+            # Persistir en Firebase (usuario + membresía en cada grupo)
+            try:
+                await firebase.save_user(self._user)
+            except Exception:
+                pass
+            for grp in self._groups:
+                try:
+                    await firebase.join_group(grp.code, self._user.id, n)
+                except Exception:
+                    pass
+
+        dlg[0] = ft.AlertDialog(
+            title=ft.Text("Cambiar nombre", size=16,
+                         weight=ft.FontWeight.BOLD, color=COLORS["text"]),
+            content=ft.Container(
+                content=ft.Column([field], spacing=12, tight=True),
+                width=280,
+            ),
+            bgcolor=COLORS["surface"],
+            actions=[
+                ft.TextButton(
+                    "Cancelar",
+                    on_click=lambda _: self._page.close(dlg[0]),
+                    style=ft.ButtonStyle(color=COLORS["text_secondary"]),
+                ),
+                ft.FilledButton(
+                    "Guardar", on_click=_ok,
+                    style=ft.ButtonStyle(bgcolor=COLORS["primary"]),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
         )
         self._page.open(dlg[0])
 

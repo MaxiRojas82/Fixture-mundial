@@ -1,4 +1,6 @@
 import asyncio
+from collections import Counter
+
 import flet as ft
 from src.services.live_service import LiveService
 from src.models.match import Match, MatchStatus
@@ -24,7 +26,15 @@ class MatchScreen:
         self._away_name = ft.Text("---", size=15, color=COLORS["text"], weight=ft.FontWeight.W_500, text_align=ft.TextAlign.CENTER, no_wrap=False)
         self._status_text = ft.Text("", size=13, color=COLORS["text_secondary"])
         self._venue_text = ft.Text("", size=11, color=COLORS["text_secondary"], text_align=ft.TextAlign.CENTER, no_wrap=False)
-        self._events_col = ft.Column(spacing=6)
+        self._home_events_col = ft.Column(spacing=5, expand=True)
+        self._away_events_col = ft.Column(spacing=5, expand=True)
+        self._figura_text = ft.Text("", size=13, color=COLORS["primary"],
+                                    weight=ft.FontWeight.W_600)
+        self._figura_row = ft.Row([
+            ft.Text("⭐", size=14),
+            ft.Text("Figura:", size=12, color=COLORS["text_secondary"]),
+            self._figura_text,
+        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, visible=False)
         self._ai_text = ft.Text(
             "Cargando análisis IA...",
             size=13,
@@ -61,6 +71,8 @@ class MatchScreen:
     def _go_back(self) -> None:
         if len(self._page.views) > 1:
             self._page.views.pop()
+            if self._page.views:
+                self._page.route = self._page.views[-1].route
             self._page.update()
         else:
             self._page.go("/")
@@ -123,8 +135,14 @@ class MatchScreen:
     def _build_events_card(self) -> ft.Container:
         return ft.Container(
             content=ft.Column([
-                ft.Text("EVENTOS", size=11, weight=ft.FontWeight.BOLD, color=COLORS["text_secondary"]),
-                self._events_col,
+                ft.Text("EVENTOS", size=11, weight=ft.FontWeight.BOLD,
+                        color=COLORS["text_secondary"]),
+                ft.Row([
+                    self._home_events_col,
+                    ft.Container(width=1, bgcolor=COLORS["card_border"]),
+                    self._away_events_col,
+                ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
+                self._figura_row,
             ], spacing=12),
             padding=ft.padding.all(16),
             margin=ft.margin.symmetric(horizontal=16),
@@ -249,42 +267,79 @@ class MatchScreen:
             self._status_text.color = COLORS["text_secondary"]
             self._score_text.color = COLORS["text_secondary"]
 
-        # Eventos: goles y tarjetas, ordenados por minuto
-        _DETALLE = {
-            "Normal Goal": "Gol",
-            "Penalty":     "Penal",
-            "Own Goal":    "En contra",
-            "Yellow Card": "Amarilla",
-            "Red Card":    "Roja",
-        }
-        self._events_col.controls.clear()
-        events = sorted(
-            [e for e in m.events if e.type in ("Goal", "Card")],
-            key=lambda e: e.time,
-        )
-        if not events:
-            self._events_col.controls.append(
-                ft.Text("Sin eventos registrados", size=13, color=COLORS["text_secondary"])
-            )
-        for ev in events:
-            raw_name = m.home.name if ev.team_id == m.home.id else m.away.name
+        # Eventos: dos columnas, local izquierda / visitante derecha
+        def _ev_row(ev) -> ft.Control:
             if ev.type == "Goal":
                 icon = "⚽"
-            elif "red" in ev.detail.lower():
-                icon = "🟥"
+                sfx = (" (ec)" if "own" in ev.detail.lower()
+                       else " (P)" if "penalty" in ev.detail.lower() else "")
             else:
-                icon = "🟨"
-            detalle = _DETALLE.get(ev.detail, ev.detail)
-            self._events_col.controls.append(
-                ft.Row([
-                    ft.Text(f"{ev.time}'", size=12, color=COLORS["text_secondary"], width=34),
-                    ft.Text(icon, size=14),
-                    ft.Column([
-                        ft.Text(ev.player or "—", size=13, color=COLORS["text"]),
-                        ft.Text(f"{team_name(raw_name)}  ·  {detalle}", size=11, color=COLORS["text_secondary"]),
-                    ], spacing=1, expand=True),
-                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                icon = "🟥" if "red" in ev.detail.lower() else "🟨"
+                sfx = ""
+            last = (ev.player or "—").split(" ")[-1]
+            main = ft.Row([
+                ft.Text(icon, size=12),
+                ft.Text(f"{ev.time}'", size=11, color=COLORS["text_secondary"], width=26),
+                ft.Text(f"{last}{sfx}", size=12, color=COLORS["text"],
+                        expand=True, no_wrap=True),
+            ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            if ev.type == "Goal" and ev.assist and "own" not in ev.detail.lower():
+                assist_last = ev.assist.split(" ")[-1]
+                return ft.Column([
+                    main,
+                    ft.Row([
+                        ft.Container(width=16),
+                        ft.Text(f"asist. {assist_last}", size=10,
+                                color=COLORS["text_secondary"], italic=True),
+                    ], spacing=0),
+                ], spacing=1)
+            return main
+
+        home_evs = sorted(
+            [e for e in m.events if e.team_id == m.home.id and e.type in ("Goal", "Card")],
+            key=lambda e: e.time,
+        )
+        away_evs = sorted(
+            [e for e in m.events if e.team_id == m.away.id and e.type in ("Goal", "Card")],
+            key=lambda e: e.time,
+        )
+
+        self._home_events_col.controls.clear()
+        self._away_events_col.controls.clear()
+
+        self._home_events_col.controls.append(
+            ft.Text(team_name(m.home.name), size=11, weight=ft.FontWeight.BOLD,
+                    color=COLORS["text_secondary"], no_wrap=True)
+        )
+        for ev in home_evs:
+            self._home_events_col.controls.append(_ev_row(ev))
+        if not home_evs:
+            self._home_events_col.controls.append(
+                ft.Text("—", size=12, color=COLORS["text_secondary"])
             )
+
+        self._away_events_col.controls.append(
+            ft.Text(team_name(m.away.name), size=11, weight=ft.FontWeight.BOLD,
+                    color=COLORS["text_secondary"], no_wrap=True)
+        )
+        for ev in away_evs:
+            self._away_events_col.controls.append(_ev_row(ev))
+        if not away_evs:
+            self._away_events_col.controls.append(
+                ft.Text("—", size=12, color=COLORS["text_secondary"])
+            )
+
+        # Figura del partido
+        real_scorers = [
+            ev.player for ev in m.events
+            if ev.type == "Goal" and ev.player and "own" not in ev.detail.lower()
+        ]
+        figura = Counter(real_scorers).most_common(1)[0][0] if real_scorers else None
+        if figura:
+            self._figura_text.value = figura
+            self._figura_row.visible = True
+        else:
+            self._figura_row.visible = False
 
         self._page.update()
 
