@@ -3,7 +3,7 @@ name: MaxFixture — Notificador FCM
 on:
   schedule:
     - cron: '*/5 * * * *'
-  workflow_dispatch:  # Disparo manual o desde cron externo si se necesita
+  workflow_dispatch:
 
 # Corridas en cola en lugar de en paralelo: dos corridas simultáneas
 # leerían el mismo estado previo y duplicarían notificaciones.

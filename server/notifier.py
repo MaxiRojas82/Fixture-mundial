@@ -279,24 +279,23 @@ def detect_events(prev: dict, curr: dict) -> list[tuple[str, str]]:
 _notif_seq = 0
 
 
-def send_notification(title: str, body: str, match_id: str) -> None:
-    # Tag único por evento: con un tag compartido por partido, Android
-    # reemplaza la notificación anterior (el gol pisaba al final, etc.)
+def send_notification(title: str, body: str, match_id: str,
+                      home_name: str = "", away_name: str = "") -> None:
     global _notif_seq
     _notif_seq += 1
+    # Mensaje data-only: sin payload "notification", así Android no lo muestra
+    # automáticamente. El handler Dart filtra por favoritos y muestra
+    # la notificación local solo si corresponde.
     msg = messaging.Message(
-        notification=messaging.Notification(title=title, body=body),
-        data={"matchId": match_id},
-        android=messaging.AndroidConfig(
-            priority="high",
-            notification=messaging.AndroidNotification(
-                channel_id="maxfixture_goals",
-                sound="default",
-                priority="high",
-                icon="ic_stat_notify",
-                tag=f"{match_id}_{_notif_seq}_{datetime.now(timezone.utc).strftime('%H%M%S')}",
-            ),
-        ),
+        data={
+            "matchId": match_id,
+            "title": title,
+            "body": body,
+            "homeName": home_name,
+            "awayName": away_name,
+            "tag": f"{match_id}_{_notif_seq}_{datetime.now(timezone.utc).strftime('%H%M%S')}",
+        },
+        android=messaging.AndroidConfig(priority="high"),
         topic=FCM_TOPIC,
     )
     result = messaging.send(msg)
@@ -351,7 +350,9 @@ async def main() -> None:
 
         for title, body in detect_events(prev_state.get(fd_id) or {}, curr):
             print(f"  📣 {title}")
-            send_notification(title, body, fd_id)
+            send_notification(title, body, fd_id,
+                              home_name=curr["home_name"],
+                              away_name=curr["away_name"])
             total_events += 1
 
         new_state[fd_id] = curr
@@ -371,7 +372,8 @@ async def main() -> None:
             home = st.get("home_name", "Local")
             away = st.get("away_name", "Visitante")
             print("  📣 🏁 Partido finalizado (salió del feed en vivo)")
-            send_notification("🏁 Partido finalizado", f"{home} {h} – {a} {away}", mid)
+            send_notification("🏁 Partido finalizado", f"{home} {h} – {a} {away}", mid,
+                              home_name=home, away_name=away)
             total_events += 1
             new_state[mid] = {**st, "status": "FT"}
             snapshot[mid] = {"status": "FT", "minute": None, "home": h, "away": a}

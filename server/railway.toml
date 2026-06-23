@@ -1,0 +1,6 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+cronSchedule = "*/5 * * * *"
+startCommand = "python notifier.py"
